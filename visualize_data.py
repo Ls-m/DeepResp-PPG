@@ -9,14 +9,14 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from scipy.interpolate import interp1d
 from scipy.signal import butter, filtfilt, decimate
 import pickle
+import matplotlib.pyplot as plt
 
-# ppg_csv_path = "/Users/eli/Downloads/PPG Data/csv"
-ppg_csv_path = "/Users/elham/Downloads/csv/csv"
+ppg_csv_path = "/Users/eli/Downloads/PPG Data/csv"
+# ppg_csv_path = "/Users/elham/Downloads/csv/csv"
 ppg_csv_files = [f for f in os.listdir(ppg_csv_path) if f.endswith('.csv') and not f.startswith('.DS_Store')]
+input_name = 'PPG'
+target_name = 'NASAL CANULA'
 
-# ppg_df = pd.read_csv(os.path.join(ppg_csv_path, ppg_file), sep='\t', index_col='Time', skiprows=[1])
-# print(ppg_df)
-# exit()
 # Iterate over each file in the directory
 for ppg_file in ppg_csv_files:
     # Load data
@@ -24,33 +24,47 @@ for ppg_file in ppg_csv_files:
 
     print(f"Checking file: {ppg_file}")
     
-    # Check if both 'PPG' and 'AIRFLOW' columns exist in the dataframe
-    if 'PPG' in ppg_df.columns and 'AIRFLOW' in ppg_df.columns:
-        # Extract the PPG and AIRFLOW columns
-        ppg_signal = ppg_df[['PPG']].values.flatten()
-        airflow_signal = ppg_df[['AIRFLOW']].values.flatten()
+    # Check if both input and target columns exist in the dataframe
+    if input_name in ppg_df.columns and target_name in ppg_df.columns:
+        # Extract the input and target columns
+        input_signal = ppg_df[[input_name]].values.flatten()
+        target_signal = ppg_df[[target_name]].values.flatten()
 
         # Get information about the PPG and AIRFLOW columns
-        ppg_length = len(ppg_signal)
-        airflow_length = len(airflow_signal)
+        input_length = len(input_signal)
+        target_length = len(target_signal)
 
-        print(f"Length of PPG signal: {ppg_length}")
-        print(f"Length of AIRFLOW signal: {airflow_length}")
+        print(f"Length of input signal: {input_length}")
+        print(f"Length of target signal: {target_length}")
 
         # Check for missing values (NaN) in both columns
-        ppg_nan_count = ppg_df['PPG'].isna().sum()
-        airflow_nan_count = ppg_df['AIRFLOW'].isna().sum()
+        input_nan_count = ppg_df[input_name].isna().sum()
+        target_nan_count = ppg_df[target_name].isna().sum()
 
-        print(f"Missing values in PPG: {ppg_nan_count}")
-        print(f"Missing values in AIRFLOW: {airflow_nan_count}")
+        print(f"Missing values in input: {input_nan_count}")
+        print(f"Missing values in target: {target_nan_count}")
 
         # Check if the lengths of both signals are the same
-        if ppg_length == airflow_length:
-            print("The lengths of PPG and AIRFLOW are the same.")
+        if input_length != target_length:
+            print(f"Warning: The lengths of input and target do not match. input length: {input_length}, target length: {target_length}")
+
         else:
-            print(f"Warning: The lengths of PPG and AIRFLOW do not match. PPG length: {ppg_length}, AIRFLOW length: {airflow_length}")
+            # Plot the input and target signals on the same plot
+            plt.figure(figsize=(12, 6))
+            plt.plot(ppg_df.index, input_signal, label='Input Signal (PPG)', color='b')
+            plt.plot(ppg_df.index, target_signal, label='Target Signal (NASAL CANULA)', color='r')
+
+            # Label the axes
+            plt.xlabel('Time (s)')
+            plt.ylabel('Signal Value')
+            plt.title(f'Input and Output Signals for {ppg_file}')
+            plt.legend()
+
+            # Show the plot
+            plt.show()
+
 
     else:
-        print("Both PPG and AIRFLOW columns are not present in this file.")
+        print("Both input and output columns are not present in this file.")
 
     print("-" * 40)  # Separator for readability
