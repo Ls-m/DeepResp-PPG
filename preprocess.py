@@ -103,10 +103,16 @@ class KalmanFilter:
 
 
 def bandpass_filter(signal, lowcut=0.1, highcut=0.6, fs=256, order=4):
+    if np.any(np.isnan(signal)) or np.any(np.isinf(signal)):
+        print("Signal contains NaNs or Infs. Cleaning signal before filtering.")
+
     nyquist = 0.5 * fs
     low = lowcut / nyquist
     high = highcut / nyquist
     b, a = butter(order, [low, high], btype='band')
+    print("Filter coefficients (b):", b)
+    print("Filter coefficients (a):", a)
+
     return filtfilt(b, a, signal)
 
 
@@ -150,11 +156,11 @@ def process_ppg_data(window_size_seconds=60, srate=256, target_fs=30):
         ppg_filtered = bandpass_filter(ppg_signal, lowcut=0.1, highcut=0.6, fs=srate)
 
         # Step 2: Kalman Filtering (motion artifact removal)
-        kalman_filter = KalmanFilter(process_variance=1e-5, measurement_variance=1e-1, initial_value=0, initial_estimate_error=1)
-        ppg_denoised = np.array([kalman_filter.update(x) for x in ppg_filtered])
+        # kalman_filter = KalmanFilter(process_variance=1e-5, measurement_variance=1e-1, initial_value=0, initial_estimate_error=1)
+        # ppg_denoised = np.array([kalman_filter.update(x) for x in ppg_filtered])
 
         # Step 3: Scaling the PPG signal to [-1, 1]
-        ppg_scaled = scaler_ppg.fit_transform(ppg_denoised.reshape(-1, 1)).flatten()
+        ppg_scaled = scaler_ppg.fit_transform(ppg_filtered.reshape(-1, 1)).flatten()
 
         # Step 4: Interpolation of the respiratory signal to match the PPG length
         resp_scaled = scaler_resp.fit_transform(resp_signal.reshape(-1, 1)).flatten()
@@ -163,7 +169,8 @@ def process_ppg_data(window_size_seconds=60, srate=256, target_fs=30):
         # Step 5: Resample PPG to target_fs (downsample from srate to target_fs)
         ppg_resampled = downsample(ppg_scaled, target_fs=target_fs, fs=srate)
         diff = len(ppg_resampled)/window_size_samples - len(resp_scaled)
-        diff*window_size_samples
+        new_len=int(len(ppg_resampled)-diff*window_size_samples)
+        ppg_resampled = ppg_resampled[:new_len]
         # Ensure segmentation is possible
         if len(ppg_resampled) >= window_size_samples:  # Ensure we have enough data for segmentation
             for i in range(0, len(ppg_resampled) - window_size_samples + 1, window_size_samples):  # Non-overlapping windows
@@ -177,7 +184,7 @@ def process_ppg_data(window_size_seconds=60, srate=256, target_fs=30):
 
     # Ensure all sequences are of the same shape
     X = np.array([x for x in X if len(x) == window_size_samples]).reshape(-1, window_size_samples, 1)  # (num_samples, window_size, 1)
-    Y = np.array([y for y in Y if len(y) == window_size_samples]).reshape(-1, window_size_samples, 1)
+    Y = np.array([y for y in Y])
 
     # Train-Test Split
     X_train, X_temp, Y_train, Y_temp = train_test_split(X, Y, test_size=0.2, random_state=42)
