@@ -11,8 +11,8 @@ from scipy.signal import butter, filtfilt, decimate
 import pickle
 import matplotlib.pyplot as plt
 
-ppg_csv_path = "/Users/eli/Downloads/PPG Data/csv"
-# ppg_csv_path = "/Users/elham/Downloads/csv/csv"
+# ppg_csv_path = "/Users/eli/Downloads/PPG Data/csv"
+ppg_csv_path = "/Users/elham/Downloads/csv/csv"
 ppg_csv_files = [f for f in os.listdir(ppg_csv_path) if f.endswith('.csv') and not f.startswith('.DS_Store')]
 input_name = 'PPG'
 target_name = 'NASAL CANULA'
@@ -49,11 +49,23 @@ for ppg_file in ppg_csv_files:
             print(f"Warning: The lengths of input and target do not match. input length: {input_length}, target length: {target_length}")
 
         else:
+            sampling_rate = 256
+            time_limit = 5  # seconds
+
+            # Calculate the number of samples corresponding to 30 seconds
+            samples_to_plot = sampling_rate * time_limit
+
             # Plot the input and target signals on the same plot
             plt.figure(figsize=(12, 6))
-            plt.plot(ppg_df.index, input_signal, label='Input Signal (PPG)', color='b')
-            plt.plot(ppg_df.index, target_signal, label='Target Signal (NASAL CANULA)', color='r')
+            plt.plot(ppg_df.index[:samples_to_plot], input_signal[:samples_to_plot], label='Input Signal (PPG)', color='b')
+            plt.plot(ppg_df.index[:samples_to_plot], target_signal[:samples_to_plot], label='Target Signal (NASAL CANULA)', color='r')
+            plt.plot(ppg_df.index[:samples_to_plot], ppg_df['AIRFLOW'][:samples_to_plot], label='Airflow Signal', color='g')
 
+            # Plot CHEST signal
+            plt.plot(ppg_df.index[:samples_to_plot], ppg_df['CHEST'][:samples_to_plot], label='Chest Signal', color='y')
+
+            # Plot ABDOMEN signal
+            plt.plot(ppg_df.index[:samples_to_plot], ppg_df['ABDOMEN'][:samples_to_plot], label='Abdomen Signal', color='m')
             # Label the axes
             plt.xlabel('Time (s)')
             plt.ylabel('Signal Value')
@@ -62,6 +74,7 @@ for ppg_file in ppg_csv_files:
 
             # Show the plot
             plt.show()
+            exit()
 
 
     else:
