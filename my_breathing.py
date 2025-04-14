@@ -5,6 +5,11 @@ from scipy.signal import butter, filtfilt
 import os
 from scipy.signal import resample
 import numpy as np
+from torch.utils.data import Dataset, DataLoader
+from model import diffusion_pipeline
+from torch.optim import Adam
+from tqdm import tqdm
+
 
 
 ppg_csv_path = "/Users/elham/Downloads/csv/csv"
@@ -31,7 +36,7 @@ num_of_subjects = 0
 # data = scipy.io.loadmat('bidmc_data.mat')
 windowed_pleth_list = []
 windowed_resp_list = []
-
+min_len = 1e9
 
 # Iterate over each file in the directory
 for ppg_file in ppg_csv_files:
@@ -62,10 +67,16 @@ for ppg_file in ppg_csv_files:
 
         windowed_pleth_list.append(windowed_pleth)
         windowed_resp_list.append(windowed_resp)
+        min_len = min(len(windowed_resp[0]), min_len)
 
 
-resp  = np.concatenate(windowed_resp_list, axis = 0)
-ppg  = np.concatenate(windowed_pleth_list, axis = 0)
+resp = [resp.squeeze(axis=0)[:min_len, :] for resp in windowed_resp_list]
+# resp  = np.squeeze(windowed_resp_list, axis = 1)
+
+# resp  = np.concatenate(windowed_resp_list, axis = 0)
+ppg = [ppg.squeeze(axis=0)[:min_len, :] for ppg in windowed_pleth_list]
+
+# ppg  = np.concatenate(windowed_pleth_list, axis = 0)
 
 
 class SimpleCSVLogger:
@@ -88,3 +99,123 @@ overall_breathing = 0
 overall_mae = 0
 
 print("number of subjects is: ",num_of_subjects)
+
+
+# Loop over each trial and use it as the test set
+for subject_id in range(num_of_subjects):
+
+    test_ppg = ppg[subject_id]        # Extract the i-th trial as the test set, shape (95, 300)
+    train_ppg = np.delete(ppg, subject_id, axis=0)  # Remove the i-th trial, shape (41, 95, 300)
+    test_resp = resp[subject_id]        # Extract the i-th trial as the test set, shape (95, 300)
+    train_resp = np.delete(resp, subject_id, axis=0)  # Remove the i-th trial, shape (41, 95, 300)
+
+    train_resp = train_resp.reshape(-1,train_resp.shape[-1])
+    train_ppg = train_ppg.reshape(-1,train_ppg.shape[-1])
+
+    
+    # Apply t he filter to the signal
+
+    for i in range(train_ppg.shape[0]):
+        train_ppg[i] = -1 + 2*(train_ppg[i] - train_ppg[i].min())/(train_ppg[i].max() - train_ppg[i].min())
+        train_resp[i] = (train_resp[i] - train_resp[i].min())/(train_resp[i].max() - train_resp[i].min())
+
+
+    for i in range(test_ppg.shape[0]):
+        test_ppg[i] = -1 + 2*(test_ppg[i] - test_ppg[i].min())/(test_ppg[i].max() - test_ppg[i].min())
+        test_resp[i] = (test_resp[i] - test_resp[i].min())/(test_resp[i].max() - test_resp[i].min())
+
+
+    class Diff_dataset(Dataset):
+        def __init__(self,ppg, co2):
+            self.ppg = ppg
+            self.co2 = co2
+        def __len__(self):
+            return len(self.ppg)
+        def __getitem__(self, index):
+            return  torch.tensor(self.ppg[index,None,:], dtype = torch.float32), torch.tensor(self.co2[index,None,:], dtype = torch.float32)
+
+
+
+
+    train_dataset = Diff_dataset(train_ppg, train_resp)
+    val_dataset = Diff_dataset(test_ppg, test_resp)
+
+    train_loader = DataLoader(train_dataset, batch_size=128,shuffle = True)
+    val_loader = DataLoader(val_dataset, batch_size=64,shuffle = False)
+
+
+
+
+    model = diffusion_pipeline(384, 1024, 6, 128, device).to(device)
+    #model = torch.nn.DataParallel(model).to(device)
+
+    
+
+    import time
+    start = time.time()
+    optimizer = Adam(model.parameters(), lr=1e-4)
+    log_path = os.path.join('model_5s_double_final_corrected.csv')
+    logger = SimpleCSVLogger(log_path)
+    num_epochs = 2
+    best_val_loss = 10000000000
+    p1 = int(0.7 * num_epochs)
+    p2 = int(0.99 * num_epochs)
+    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer, milestones=[p1, p2], gamma=0.1)
+    
+
+
+    for epoch_no in range(num_epochs):
+            avg_loss = 0
+            model.train()
+            with tqdm(train_loader, mininterval=5.0, maxinterval=50.0) as it:
+                for batch_no, train_batch in enumerate(it, start=1):
+                    optimizer.zero_grad()
+                    loss = model(train_batch[0].to(device), co2 = train_batch[1].to(device),  flag = 0)
+                    loss = loss.mean(dim = 0)
+                    loss.backward()
+                    avg_loss += loss.item()/train_batch[0].shape[0]
+                    optimizer.step()
+                    it.set_postfix(
+                        ordered_dict={
+                            "Train: avg_epoch_loss": avg_loss / batch_no,
+                            "epoch": epoch_no,
+                        },
+                        refresh=False,
+                    )
+
+                lr_scheduler.step()
+
+
+
+                
+    output_path = os.path.join(f'model_bi{subject_id}_final.pth')
+    torch.save(model.state_dict(), output_path)
+    end = time.time()
+    print('overall time: ', (start - end)/60)    
+    mae = 0
+    num_windows = 0
+    
+    model.eval()
+
+    results = []
+
+    with tqdm(val_loader, mininterval=5.0, maxinterval=50.0) as it:
+        for batch_no, val_batch in enumerate(it, start=1):
+            y = model(val_batch[0].to(device), n_samples=100, flag=1)
+            r = y[:,0:100,0,:].mean(dim=1).detach().cpu().numpy()
+            results.append(y)
+            num_windows = num_windows + val_batch[0].shape[0]
+
+            for i in range(val_batch[0].shape[0]):
+                truth = val_batch[1][i,0,:].detach().cpu().numpy()
+                mae_current = np.abs(r[i] - truth).mean()
+                mae = mae + mae_current
+
+    print('mae: ', mae/num_windows)
+    for i in range(len(results)):
+        results[i] = results[i][:,0:100,0,:].mean(dim=1).detach().cpu().numpy()
+    segment_results = np.concatenate(results, axis = 0)
+
+
+    
