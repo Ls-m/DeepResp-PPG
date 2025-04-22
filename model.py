@@ -156,7 +156,7 @@ class diffusion_pipeline(nn.Module):
         super().__init__()    
         self.diffusion_model = diffusion_basemodel(input_dim, hidden_dim, num_layers, output_dim)
 
-        self.num_steps = 5
+        self.num_steps = 50
         self.beta = np.linspace(0.0001, 0.5, self.num_steps)
    
         self.alpha_hat = 1 - self.beta

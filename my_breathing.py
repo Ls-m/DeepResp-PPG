@@ -75,7 +75,7 @@ min_len = 1e9
 
 # Iterate over each file in the directory
 # Limit the number of files to process (e.g., first 5 files)
-for ppg_file in ppg_csv_files[:3]:
+for ppg_file in ppg_csv_files:
     data = pd.read_csv(os.path.join(ppg_csv_path, ppg_file), sep='\t', index_col='Time', skiprows=[1])
     if input_name in data.columns and target_name in data.columns:
         num_of_subjects += 1
@@ -130,7 +130,7 @@ class SimpleCSVLogger:
             csvwriter.writerow([subject, metric1, value1, metric2, value2, metric3, value3])
 
 # device = torch.device("cuda:2")
-device = torch.device("mps")
+device = torch.device("cuda")
 
 overall_breathing = 0
 overall_mae = 0
@@ -182,13 +182,13 @@ for subject_id in range(num_of_subjects):
     train_dataset = Diff_dataset(train_ppg, train_resp)
     val_dataset = Diff_dataset(test_ppg, test_resp)
 
-    train_loader = DataLoader(train_dataset, batch_size=32,shuffle = True)
-    val_loader = DataLoader(val_dataset, batch_size=16,shuffle = False)
+    train_loader = DataLoader(train_dataset, batch_size=128,shuffle = True)
+    val_loader = DataLoader(val_dataset, batch_size=64,shuffle = False)
 
 
 
 
-    model = diffusion_pipeline(384, 512, 4, 128, device).to(device)
+    model =     model = diffusion_pipeline(384, 1024, 6, 128, device).to(device)
     #model = torch.nn.DataParallel(model).to(device)
 
     
@@ -198,7 +198,7 @@ for subject_id in range(num_of_subjects):
     optimizer = Adam(model.parameters(), lr=1e-4)
     log_path = os.path.join('model_5s_double_final_corrected.csv')
     logger = SimpleCSVLogger(log_path)
-    num_epochs = 1
+    num_epochs = 400
     best_val_loss = 10000000000
     p1 = int(0.7 * num_epochs)
     p2 = int(0.99 * num_epochs)
@@ -244,7 +244,7 @@ for subject_id in range(num_of_subjects):
 
     with tqdm(val_loader, mininterval=5.0, maxinterval=50.0) as it:
         for batch_no, val_batch in enumerate(it, start=1):
-            y = model(val_batch[0].to(device), n_samples=2, flag=1)
+            y = model(val_batch[0].to(device), n_samples=100, flag=1)
             r = y[:,0:100,0,:].mean(dim=1).detach().cpu().numpy()
             results.append(y)
             num_windows = num_windows + val_batch[0].shape[0]
@@ -290,8 +290,7 @@ for subject_id in range(num_of_subjects):
         r_current = whole_trial_results[overlap * i:overlap * i + 1800].copy()
         c_current = whole_trial_resp[overlap * i:overlap * i + 1800].copy()
 
-        print("NaNs in signal:", np.isnan(c_current).sum())
-        print("Unique values:", np.unique(c_current))
+
         RR_truth = calculate_respiratory_rate(c_current, 30)
         RR_predicted = calculate_respiratory_rate(r_current, 30)
         E = E + np.abs(RR_truth - RR_predicted)
@@ -313,8 +312,8 @@ for subject_id in range(num_of_subjects):
     logger.log(subject_id, 'breathing', breathing_diff, 'mae_whole', mae_whole, 'corr', cor[0, 1])
     overall_breathing = overall_breathing + breathing_diff
     overall_mae = overall_mae + mae_whole
-print(overall_breathing / 53)
-print(overall_mae / 53)
+print(overall_breathing / num_of_subjects)
+print(overall_mae / num_of_subjects)
 
 
     
