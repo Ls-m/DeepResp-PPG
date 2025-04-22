@@ -75,25 +75,25 @@ min_len = 1e9
 
 # Iterate over each file in the directory
 # Limit the number of files to process (e.g., first 5 files)
-for ppg_file in ppg_csv_files:
+for ppg_file in tqdm(ppg_csv_files, leave=False) :
     data = pd.read_csv(os.path.join(ppg_csv_path, ppg_file), sep='\t', index_col='Time', skiprows=[1])
     if input_name in data.columns and target_name in data.columns:
         num_of_subjects += 1
         ppg_sub = []
         resp_sub = []
         ppg = data[input_name].to_numpy().reshape(-1, 1)
-        print("type ppg is: ",type(ppg))
+        # print("type ppg is: ",type(ppg))
         resp = data[target_name].to_numpy().reshape(-1, 1)
-        print("type resp is: ",type(resp))
-        print("shape 1 resp (raw) is: ",resp.shape[0])
+        # print("type resp is: ",type(resp))
+        # print("shape 1 resp (raw) is: ",resp.shape[0])
         target_freq = 30
         coef = target_freq/256
-        print("coef is: ",coef)
+        # print("coef is: ",coef)
         resp = resample(resp, int(resp.shape[0]*coef))
         ppg = resample(ppg, int(ppg.shape[0]*coef))
-        print("shape 2 resp (resampled) is: ",resp.shape[0])
+        # print("shape 2 resp (resampled) is: ",resp.shape[0])
         resp = filtfilt(b, a, resp[:,0])
-        print("shape 3 resp (low pass filtered) is : ",resp.shape[0])
+        # print("shape 3 resp (low pass filtered) is : ",resp.shape[0])
         for seg in range(int(np.floor(resp.shape[0]/(seg_length*30)))):
             resp_sub.append(resp[None,seg_length*30*seg:seg_length*30*(seg+1),None])
             ppg_sub.append(ppg[None,seg_length*30*seg:seg_length*30*(seg+1)])
@@ -182,8 +182,8 @@ for subject_id in range(num_of_subjects):
     train_dataset = Diff_dataset(train_ppg, train_resp)
     val_dataset = Diff_dataset(test_ppg, test_resp)
 
-    train_loader = DataLoader(train_dataset, batch_size=128,shuffle = True)
-    val_loader = DataLoader(val_dataset, batch_size=64,shuffle = False)
+    train_loader = DataLoader(train_dataset, batch_size=1024,shuffle = True)
+    val_loader = DataLoader(val_dataset, batch_size=1024,shuffle = False)
 
 
 
