@@ -46,7 +46,7 @@ def calculate_respiratory_rate(signal, sampling_rate):
     return respiratory_rate_bpm
 
 
-ppg_csv_path = "/Users/eli/Downloads/PPG Data/csv"
+ppg_csv_path = "./csv"
 # ppg_csv_path = "/Users/elham/Downloads/csv/csv"
 ppg_csv_files = [f for f in os.listdir(ppg_csv_path) if f.endswith('.csv') and not f.startswith('.DS_Store')]
 input_name = 'PPG'
