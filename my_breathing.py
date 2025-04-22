@@ -75,7 +75,7 @@ min_len = 1e9
 
 # Iterate over each file in the directory
 # Limit the number of files to process (e.g., first 5 files)
-for ppg_file in tqdm(ppg_csv_files, leave=False) :
+for ppg_file in tqdm(ppg_csv_files, leave=True) :
     data = pd.read_csv(os.path.join(ppg_csv_path, ppg_file), sep='\t', index_col='Time', skiprows=[1])
     if input_name in data.columns and target_name in data.columns:
         num_of_subjects += 1
@@ -182,7 +182,7 @@ for subject_id in range(num_of_subjects):
     train_dataset = Diff_dataset(train_ppg, train_resp)
     val_dataset = Diff_dataset(test_ppg, test_resp)
 
-    train_loader = DataLoader(train_dataset, batch_size=1024,shuffle = True)
+    train_loader = DataLoader(train_dataset, batch_size=4096,shuffle = True)
     val_loader = DataLoader(val_dataset, batch_size=1024,shuffle = False)
 
 
@@ -198,7 +198,7 @@ for subject_id in range(num_of_subjects):
     optimizer = Adam(model.parameters(), lr=1e-4)
     log_path = os.path.join('model_5s_double_final_corrected.csv')
     logger = SimpleCSVLogger(log_path)
-    num_epochs = 400
+    num_epochs = 30
     best_val_loss = 10000000000
     p1 = int(0.7 * num_epochs)
     p2 = int(0.99 * num_epochs)
