@@ -9,10 +9,45 @@ from torch.utils.data import Dataset, DataLoader
 from model import diffusion_pipeline
 from torch.optim import Adam
 from tqdm import tqdm
+from scipy.fftpack import fft
+
+def calculate_respiratory_rate(signal, sampling_rate):
+    """
+    Calculate the respiratory rate from a signal using FFT to find the most dominant frequency.
+
+    :param signal: The input signal, a 1D numpy array.
+    :param sampling_rate: The sampling rate of the signal in Hz.
+    :return: The respiratory rate in breaths per minute (BPM).
+    """
+
+    # Length of the signal
+    n = len(signal)
+
+    # Perform FFT on the signal
+    fft_values = fft(signal)
+
+    # Frequency bins
+    freq = np.fft.fftfreq(n, d=1 / sampling_rate)
+
+    # Get the magnitude of the FFT
+    fft_magnitude = np.abs(fft_values)
+
+    # Consider only the positive half of the frequencies
+    positive_freq_idx = np.where(freq > 0)
+    freq = freq[positive_freq_idx]
+    fft_magnitude = fft_magnitude[positive_freq_idx]
+
+    # Find the peak frequency
+    peak_frequency = freq[np.argmax(fft_magnitude)]
+
+    # Convert frequency to respiratory rate (breaths per minute)
+    respiratory_rate_bpm = peak_frequency * 60
+
+    return respiratory_rate_bpm
 
 
-
-ppg_csv_path = "/Users/elham/Downloads/csv/csv"
+ppg_csv_path = "/Users/eli/Downloads/PPG Data/csv"
+# ppg_csv_path = "/Users/elham/Downloads/csv/csv"
 ppg_csv_files = [f for f in os.listdir(ppg_csv_path) if f.endswith('.csv') and not f.startswith('.DS_Store')]
 input_name = 'PPG'
 target_name = 'NASAL CANULA'
@@ -39,7 +74,8 @@ windowed_resp_list = []
 min_len = 1e9
 
 # Iterate over each file in the directory
-for ppg_file in ppg_csv_files:
+# Limit the number of files to process (e.g., first 5 files)
+for ppg_file in ppg_csv_files[:3]:
     data = pd.read_csv(os.path.join(ppg_csv_path, ppg_file), sep='\t', index_col='Time', skiprows=[1])
     if input_name in data.columns and target_name in data.columns:
         num_of_subjects += 1
@@ -94,11 +130,25 @@ class SimpleCSVLogger:
             csvwriter.writerow([subject, metric1, value1, metric2, value2, metric3, value3])
 
 # device = torch.device("cuda:2")
-device = torch.device("cpu")
+device = torch.device("mps")
+
 overall_breathing = 0
 overall_mae = 0
 
 print("number of subjects is: ",num_of_subjects)
+
+
+class Diff_dataset(Dataset):
+    def __init__(self, ppg, co2):
+        self.ppg = ppg
+        self.co2 = co2
+
+    def __len__(self):
+        return len(self.ppg)
+
+    def __getitem__(self, index):
+        return torch.tensor(self.ppg[index, None, :], dtype=torch.float32), torch.tensor(self.co2[index, None, :],
+                                                                                         dtype=torch.float32)
 
 
 # Loop over each trial and use it as the test set
@@ -113,7 +163,7 @@ for subject_id in range(num_of_subjects):
     train_ppg = train_ppg.reshape(-1,train_ppg.shape[-1])
 
     
-    # Apply t he filter to the signal
+    # Apply the filter to the signal
 
     for i in range(train_ppg.shape[0]):
         train_ppg[i] = -1 + 2*(train_ppg[i] - train_ppg[i].min())/(train_ppg[i].max() - train_ppg[i].min())
@@ -125,14 +175,6 @@ for subject_id in range(num_of_subjects):
         test_resp[i] = (test_resp[i] - test_resp[i].min())/(test_resp[i].max() - test_resp[i].min())
 
 
-    class Diff_dataset(Dataset):
-        def __init__(self,ppg, co2):
-            self.ppg = ppg
-            self.co2 = co2
-        def __len__(self):
-            return len(self.ppg)
-        def __getitem__(self, index):
-            return  torch.tensor(self.ppg[index,None,:], dtype = torch.float32), torch.tensor(self.co2[index,None,:], dtype = torch.float32)
 
 
 
@@ -140,13 +182,13 @@ for subject_id in range(num_of_subjects):
     train_dataset = Diff_dataset(train_ppg, train_resp)
     val_dataset = Diff_dataset(test_ppg, test_resp)
 
-    train_loader = DataLoader(train_dataset, batch_size=128,shuffle = True)
-    val_loader = DataLoader(val_dataset, batch_size=64,shuffle = False)
+    train_loader = DataLoader(train_dataset, batch_size=32,shuffle = True)
+    val_loader = DataLoader(val_dataset, batch_size=16,shuffle = False)
 
 
 
 
-    model = diffusion_pipeline(384, 1024, 6, 128, device).to(device)
+    model = diffusion_pipeline(384, 512, 4, 128, device).to(device)
     #model = torch.nn.DataParallel(model).to(device)
 
     
@@ -156,7 +198,7 @@ for subject_id in range(num_of_subjects):
     optimizer = Adam(model.parameters(), lr=1e-4)
     log_path = os.path.join('model_5s_double_final_corrected.csv')
     logger = SimpleCSVLogger(log_path)
-    num_epochs = 2
+    num_epochs = 1
     best_val_loss = 10000000000
     p1 = int(0.7 * num_epochs)
     p2 = int(0.99 * num_epochs)
@@ -202,7 +244,7 @@ for subject_id in range(num_of_subjects):
 
     with tqdm(val_loader, mininterval=5.0, maxinterval=50.0) as it:
         for batch_no, val_batch in enumerate(it, start=1):
-            y = model(val_batch[0].to(device), n_samples=100, flag=1)
+            y = model(val_batch[0].to(device), n_samples=2, flag=1)
             r = y[:,0:100,0,:].mean(dim=1).detach().cpu().numpy()
             results.append(y)
             num_windows = num_windows + val_batch[0].shape[0]
@@ -216,6 +258,63 @@ for subject_id in range(num_of_subjects):
     for i in range(len(results)):
         results[i] = results[i][:,0:100,0,:].mean(dim=1).detach().cpu().numpy()
     segment_results = np.concatenate(results, axis = 0)
+
+    whole_trial_resp = []
+    segment_resp = test_resp
+    for i in range(0, segment_resp.shape[0]):
+        whole_trial_resp.append(segment_resp[i])
+    whole_trial_resp = np.concatenate(whole_trial_resp, axis=0)
+
+    segment_results2 = segment_results
+
+    whole_trial_results = []
+    for i in range(0, segment_results.shape[0]):
+        whole_trial_results.append(segment_results[i])
+    whole_trial_results = np.concatenate(whole_trial_results, axis=0)
+    whole_trial_results = filtfilt(b, a, whole_trial_results)
+    whole_trial_ppg = []
+    test_ppg = test_ppg
+    segment_ppg = test_ppg
+    for i in range(0, segment_ppg.shape[0]):
+        segment_ppg[i] = (segment_ppg[i] - segment_ppg[i].min()) / (segment_ppg[i].max() - segment_ppg[i].min())
+        whole_trial_ppg.append(segment_ppg[i])
+    whole_trial_ppg = np.concatenate(whole_trial_ppg, axis=0)
+
+    E = 0
+    dc_truth = []
+    dc_results = []
+    overlap = 600
+    for i in range(int(np.floor((whole_trial_results.shape[0] - 1800) / overlap)) + 1):
+        c_current = np.zeros((1800))
+        r_current = np.zeros((1800))
+        r_current = whole_trial_results[overlap * i:overlap * i + 1800].copy()
+        c_current = whole_trial_resp[overlap * i:overlap * i + 1800].copy()
+
+        print("NaNs in signal:", np.isnan(c_current).sum())
+        print("Unique values:", np.unique(c_current))
+        RR_truth = calculate_respiratory_rate(c_current, 30)
+        RR_predicted = calculate_respiratory_rate(r_current, 30)
+        E = E + np.abs(RR_truth - RR_predicted)
+
+        c_current[c_current >= 0.5] = 1
+        c_current[c_current < 0.5] = 0
+        r_current[r_current >= 0.5] = 1
+        r_current[r_current < 0.5] = 0
+
+        dc_truth.append(c_current.sum())
+        dc_results.append(r_current.sum())
+
+    print('Mean Breathing Rate Difference: ', E / int(np.floor((whole_trial_results.shape[0] - 1800) / overlap)))
+    print('Whole Trial MAE: ', np.abs(whole_trial_results - whole_trial_resp).mean())
+    cor = np.corrcoef(dc_truth, dc_results)
+    print('duty cycle correlation:', cor)
+    breathing_diff = E / int(np.floor((whole_trial_results.shape[0] - 1800) / overlap))
+    mae_whole = np.abs(whole_trial_results - whole_trial_resp).mean()
+    logger.log(subject_id, 'breathing', breathing_diff, 'mae_whole', mae_whole, 'corr', cor[0, 1])
+    overall_breathing = overall_breathing + breathing_diff
+    overall_mae = overall_mae + mae_whole
+print(overall_breathing / 53)
+print(overall_mae / 53)
 
 
     
