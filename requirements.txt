@@ -1,3 +1,8 @@
+torch
 numpy
 pandas
 scikit-learn
+scipy
+tqdm
+torchmetrics
+matplotlib
