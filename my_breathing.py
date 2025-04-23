@@ -47,7 +47,7 @@ def calculate_respiratory_rate(signal, sampling_rate):
 
 
 ppg_csv_path = "./csv"
-# ppg_csv_path = "/Users/elham/Downloads/csv/csv"
+# ppg_csv_path = "/Users/eli/Downloads/PPG Data/csv"
 ppg_csv_files = [f for f in os.listdir(ppg_csv_path) if f.endswith('.csv') and not f.startswith('.DS_Store')]
 input_name = 'PPG'
 target_name = 'NASAL CANULA'
@@ -110,6 +110,7 @@ resp = [resp.squeeze(axis=0)[:min_len, :] for resp in windowed_resp_list]
 # resp  = np.squeeze(windowed_resp_list, axis = 1)
 
 # resp  = np.concatenate(windowed_resp_list, axis = 0)
+print("min_len is:",min_len)
 ppg = [ppg.squeeze(axis=0)[:min_len, :] for ppg in windowed_pleth_list]
 
 # ppg  = np.concatenate(windowed_pleth_list, axis = 0)
@@ -182,13 +183,13 @@ for subject_id in range(num_of_subjects):
     train_dataset = Diff_dataset(train_ppg, train_resp)
     val_dataset = Diff_dataset(test_ppg, test_resp)
 
-    train_loader = DataLoader(train_dataset, batch_size=4096,shuffle = True)
-    val_loader = DataLoader(val_dataset, batch_size=1024,shuffle = False)
+    train_loader = DataLoader(train_dataset, batch_size=2048,shuffle = True)
+    val_loader = DataLoader(val_dataset, batch_size=256,shuffle = False)
 
 
 
 
-    model =     model = diffusion_pipeline(384, 1024, 6, 128, device).to(device)
+    model = diffusion_pipeline(384, 1024, 6, 128, device).to(device)
     #model = torch.nn.DataParallel(model).to(device)
 
     
@@ -244,7 +245,7 @@ for subject_id in range(num_of_subjects):
 
     with tqdm(val_loader, mininterval=5.0, maxinterval=50.0) as it:
         for batch_no, val_batch in enumerate(it, start=1):
-            y = model(val_batch[0].to(device), n_samples=100, flag=1)
+            y = model(val_batch[0].to(device), n_samples=10, flag=1)
             r = y[:,0:100,0,:].mean(dim=1).detach().cpu().numpy()
             results.append(y)
             num_windows = num_windows + val_batch[0].shape[0]
