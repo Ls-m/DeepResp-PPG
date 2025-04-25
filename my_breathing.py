@@ -10,6 +10,8 @@ from model import diffusion_pipeline
 from torch.optim import Adam
 from tqdm import tqdm
 from scipy.fftpack import fft
+import time
+
 
 def calculate_respiratory_rate(signal, sampling_rate):
     """
@@ -46,8 +48,8 @@ def calculate_respiratory_rate(signal, sampling_rate):
     return respiratory_rate_bpm
 
 
-ppg_csv_path = "./csv"
-# ppg_csv_path = "/Users/eli/Downloads/PPG Data/csv"
+# ppg_csv_path = "./csv"
+ppg_csv_path = "/Users/eli/Downloads/PPG Data/csv"
 ppg_csv_files = [f for f in os.listdir(ppg_csv_path) if f.endswith('.csv') and not f.startswith('.DS_Store')]
 input_name = 'PPG'
 target_name = 'NASAL CANULA'
@@ -131,7 +133,7 @@ class SimpleCSVLogger:
             csvwriter.writerow([subject, metric1, value1, metric2, value2, metric3, value3])
 
 # device = torch.device("cuda:2")
-device = torch.device("cuda")
+device = torch.device("mps")
 
 overall_breathing = 0
 overall_mae = 0
@@ -194,7 +196,7 @@ for subject_id in range(num_of_subjects):
 
     
 
-    import time
+
     start = time.time()
     optimizer = Adam(model.parameters(), lr=1e-4)
     log_path = os.path.join('model_5s_double_final_corrected.csv')
@@ -235,7 +237,7 @@ for subject_id in range(num_of_subjects):
     output_path = os.path.join(f'model_bi{subject_id}_final.pth')
     torch.save(model.state_dict(), output_path)
     end = time.time()
-    print('overall time: ', (start - end)/60)    
+    print((end - start)/60, 'minutes')
     mae = 0
     num_windows = 0
     
