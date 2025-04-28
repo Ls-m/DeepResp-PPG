@@ -79,7 +79,26 @@ kf = KFold(42)
 kf.get_n_splits(data_ppg)
 sub_num = 1
 
+
+ppg_list = []
+resp_list = []
+
 for ppg_file in tqdm(ppg_csv_files, leave=True) :
     data = pd.read_csv(os.path.join(ppg_csv_path, ppg_file), sep='\t', index_col='Time', skiprows=[1])
     if input_name in data.columns and target_name in data.columns:
         num_of_subjects += 1
+        ppg_signal = data[input_name].to_numpy()  # extract the PPG signal
+        resp_signal = data[target_name].to_numpy()  # extract the target signal (NASAL CANULA, AIRFLOW, etc.)
+
+
+        # append each subject's signal to the list
+        ppg_list.append(ppg_signal)
+        resp_list.append(resp_signal)
+
+
+# After looping over all subjects, stack them together
+data_ppg = np.stack(ppg_list, axis=0)  # shape: (num_subjects, signal_length)
+data_resp = np.stack(resp_list, axis=0)  # shape: (num_subjects, signal_length)
+
+print(f"data_ppg shape: {data_ppg.shape}")
+print(f"data_co2 shape: {data_resp.shape}")
