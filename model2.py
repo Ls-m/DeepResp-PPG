@@ -1,7 +1,26 @@
 import torch
 
 import torch.nn as nn
+#define number of kernels per layer
+n_in, n_out = 1, 8
+n_out2 = 8
+n_out3 = 8
+n_outputs = 1
 
+# define kernel lengths, padding, dilation, stride, and dropout
+kernel_size = 150
+kernel_size2 = 75
+kernel_size3 = 50
+padding = 20
+dilation = 1
+stride = 1
+dropout_val = 0.5
+padding2 = 20
+padding3 = 10
+dilation2 = 1
+dilation3 = 1
+stride2 = 1
+stride3 = 1
 class Correncoder_model(nn.Module):
     def __init__(self):
         super().__init__()

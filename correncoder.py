@@ -8,6 +8,9 @@ from sklearn.utils import shuffle
 from sklearn.model_selection import KFold
 from model2 import Correncoder_model
 import torch.nn as nn
+from scipy.signal import resample
+import matplotlib.pyplot as plt
+
 
 # a function that gives a rough indication of breaths per minute error by examining the crossings of 0.5
 # this assumes that the respiratory reference is normalised between 0 and 1.
@@ -32,8 +35,8 @@ def breaths_per_min_zc(output_array_zc, input_array_zc):
     return mean_abs_error, mean_error
 
 
-# ppg_csv_path = "/Users/eli/Downloads/PPG Data/csv"
-ppg_csv_path = "/Users/elham/Downloads/csv/csv"
+ppg_csv_path = "/Users/eli/Downloads/PPG Data/csv"
+# ppg_csv_path = "/Users/elham/Downloads/csv/csv"
 
 ppg_csv_files = [f for f in os.listdir(ppg_csv_path) if f.endswith('.csv') and not f.startswith('.DS_Store')]
 input_name = 'PPG'
@@ -41,32 +44,14 @@ target_name = 'NASAL CANULA'
 
 num_of_subjects = 0
 
-
+original_fs = 256    # your original sampling rate
+target_fs = 30       # your desired target rate
 
 # define number of epochs and batch size
-num_epochs = 80
+num_epochs = 2
 batch_size = 8
 
-#define number of kernels per layer
-n_in, n_out = 1, 8
-n_out2 = 8
-n_out3 = 8
-n_outputs = 1
 
-# define kernel lengths, padding, dilation, stride, and dropout
-kernel_size = 150
-kernel_size2 = 75
-kernel_size3 = 50
-padding = 20
-dilation = 1
-stride = 1
-dropout_val = 0.5
-padding2 = 20
-padding3 = 10
-dilation2 = 1
-dilation3 = 1
-stride2 = 1
-stride3 = 1
 
 # set a seed for evaluation (optional)
 seed_val = 55
@@ -93,28 +78,57 @@ for ppg_file in tqdm(ppg_csv_files[:10], leave=True) :
         ppg_signal = data[input_name].to_numpy()  # extract the PPG signal
         resp_signal = data[target_name].to_numpy()  # extract the target signal (NASAL CANULA, AIRFLOW, etc.)
 
+        # --- Resample both signals ---
+        duration_seconds = ppg_signal.shape[0] / original_fs
+
+        new_length = int(duration_seconds * target_fs)
+
+        ppg_signal = resample(ppg_signal, new_length)
+        resp_signal = resample(resp_signal, new_length)
 
         # append each subject's signal to the list
         ppg_list.append(ppg_signal)
         resp_list.append(resp_signal)
 
+# First, find the minimum length
+min_len = min([sig.shape[0] for sig in ppg_list])
 
+# Then crop all signals to the same length
+ppg_list = [sig[:min_len] for sig in ppg_list]
+resp_list = [sig[:min_len] for sig in resp_list]
 # After looping over all subjects, stack them together
 data_ppg = np.stack(ppg_list, axis=0)  # shape: (num_subjects, signal_length)
 data_resp = np.stack(resp_list, axis=0)  # shape: (num_subjects, signal_length)
 
 print(f"data_ppg shape: {data_ppg.shape}")
-print(f"data_co2 shape: {data_resp.shape}")
+print(f"data_resp shape: {data_resp.shape}")
 
 
-kf = KFold(42)
+kf = KFold(num_of_subjects)
 kf.get_n_splits(data_ppg)
 sub_num = 1
 
+if np.any(np.isnan(data_ppg)):
+    print(f"NaNs found in data_ppg")
+
+
+if np.any(np.isnan(data_resp)):
+    print(f"NaNs found in data_resp")
 
 for train_index, test_index in kf.split(data_ppg):
     trainX, testX = data_ppg[train_index, :], data_ppg[test_index, :]
     trainy, testy = data_resp[train_index, :], data_resp[test_index, :]
+
+    for i in range(trainX.shape[0]):
+        if trainX[i].max() - trainX[i].min()==0:
+            print("fuckkkk")
+        trainX[i] = -1 + 2*(trainX[i] - trainX[i].min())/(trainX[i].max() - trainX[i].min())
+        trainy[i] = (trainy[i] - trainy[i].min())/(trainy[i].max() - trainy[i].min())
+
+
+    for i in range(testX.shape[0]):
+        testX[i] = -1 + 2*(testX[i] - testX[i].min())/(testX[i].max() - testX[i].min())
+        testy[i] = (testy[i] - testy[i].min())/(testy[i].max() - testy[i].min())
 
     # print which subject is current test subject
     print(sub_num)
@@ -135,12 +149,17 @@ for train_index, test_index in kf.split(data_ppg):
     # ensure correct shape, can also transpose here instead of reshaping
     L_in = trainX.shape[-1]
     trainX = trainX.reshape((trainX.shape[0], 1, L_in))
+    if np.any(np.isnan(trainX)):
+        print(f"NaNs found in trainX")
     testX = testX.reshape((testX.shape[0], 1, L_in))
 
     total_step = trainX.shape[0]
 
     # transformation of data into torch tensors
     trainXT = torch.from_numpy(trainX.astype('float32'))
+    # Check inputs to the model
+    if torch.isnan(trainXT).any():
+        print("NaN in trainXT")
     # trainXT = trainXT.transpose(1,2).float() #input is (N, Cin, Lin) = Ntimesteps, Nfeatures, 128
     trainyT = torch.from_numpy(trainy.astype('float32'))
     testXT = torch.from_numpy(testX.astype('float32'))
@@ -160,8 +179,9 @@ for train_index, test_index in kf.split(data_ppg):
             trainXT_seg = trainXT[i * batch_size:(i + 1) * batch_size, :, :]
             trainyT_seg = trainyT[i * batch_size:(i + 1) * batch_size, None]
             # Run the forward pass
+            print("this")
             outputs = model(trainXT_seg)
-
+            print("here")
             loss = criterion(outputs, trainyT_seg)
 
             #loss = d_loss_output[0]
@@ -187,8 +207,8 @@ for train_index, test_index in kf.split(data_ppg):
         print(sub_num)
         print("Epoch")
         print(epoch)
-        print("Training loss")
-        print(loss)
+        # print("Training loss")
+        # print(loss)
         print("Test loss")
         print(loss_test)
         print("Peaks error abs")
@@ -198,5 +218,22 @@ for train_index, test_index in kf.split(data_ppg):
 
     # save the PyTorch model files
     torch.save(model.state_dict(), model_path)
+    for param in model.parameters():
+        if param.grad is not None:
+            print(f"Gradient mean: {param.grad.mean()}")
+
+    random_indices = np.random.choice(len(output_array), size=1, replace=False)
+
+    for idx in random_indices:
+        plt.figure(figsize=(10, 3))
+        plt.plot(output_array[idx][0][:20], label='Predicted', color='blue')
+        plt.plot(input_array[idx][:20], label='Ground Truth', color='red', linestyle='--')
+        plt.title(f"Test Sample #{idx}")
+        plt.xlabel("Time steps")
+        plt.ylabel("Normalized Amplitude")
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
     sub_num = sub_num + 1
 

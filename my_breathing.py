@@ -168,19 +168,50 @@ for subject_id in range(num_of_subjects):
     
     # Apply the filter to the signal
 
-    for i in range(train_ppg.shape[0]):
-        train_ppg[i] = -1 + 2*(train_ppg[i] - train_ppg[i].min())/(train_ppg[i].max() - train_ppg[i].min())
-        train_resp[i] = (train_resp[i] - train_resp[i].min())/(train_resp[i].max() - train_resp[i].min())
+    epsilon = 1e-8  # Small value to avoid division by zero
 
+    for i in range(train_ppg.shape[0]):
+        ppg_range = train_ppg[i].max() - train_ppg[i].min()
+        if ppg_range < epsilon:
+            print(f"Constant train_ppg signal at index {i}, replacing with zeros.")
+            train_ppg[i] = np.zeros_like(train_ppg[i])
+        else:
+            train_ppg[i] = -1 + 2 * (train_ppg[i] - train_ppg[i].min()) / (ppg_range + epsilon)
+
+        resp_range = train_resp[i].max() - train_resp[i].min()
+        if resp_range < epsilon:
+            print(f"Constant train_resp signal at index {i}, replacing with zeros.")
+            train_resp[i] = np.zeros_like(train_resp[i])
+        else:
+            train_resp[i] = (train_resp[i] - train_resp[i].min()) / (resp_range + epsilon)
 
     for i in range(test_ppg.shape[0]):
-        test_ppg[i] = -1 + 2*(test_ppg[i] - test_ppg[i].min())/(test_ppg[i].max() - test_ppg[i].min())
-        test_resp[i] = (test_resp[i] - test_resp[i].min())/(test_resp[i].max() - test_resp[i].min())
+        ppg_range = test_ppg[i].max() - test_ppg[i].min()
+        if ppg_range < epsilon:
+            print(f"Constant test_ppg signal at index {i}, replacing with zeros.")
+            test_ppg[i] = np.zeros_like(test_ppg[i])
+        else:
+            test_ppg[i] = -1 + 2 * (test_ppg[i] - test_ppg[i].min()) / (ppg_range + epsilon)
+
+        resp_range = test_resp[i].max() - test_resp[i].min()
+        if resp_range < epsilon:
+            print(f"Constant test_resp signal at index {i}, replacing with zeros.")
+            test_resp[i] = np.zeros_like(test_resp[i])
+        else:
+            test_resp[i] = (test_resp[i] - test_resp[i].min()) / (resp_range + epsilon)
 
 
 
 
 
+    if np.any(np.isnan(train_ppg)):
+        print(f"NaNs found in train_ppg")
+    if np.any(np.isnan(train_resp)):
+        print(f"NaNs found in train_resp")
+    if np.any(np.isnan(test_ppg)):
+        print(f"NaNs found in test_ppg")
+    if np.any(np.isnan(test_resp)):
+        print(f"NaNs found in test_resp")
 
     train_dataset = Diff_dataset(train_ppg, train_resp)
     val_dataset = Diff_dataset(test_ppg, test_resp)
