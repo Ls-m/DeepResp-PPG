@@ -70,7 +70,7 @@ learning_rate = 0.001
 
 ppg_list = []
 resp_list = []
-
+print("data processing...")
 for ppg_file in tqdm(ppg_csv_files[:10], leave=True) :
     data = pd.read_csv(os.path.join(ppg_csv_path, ppg_file), sep='\t', index_col='Time', skiprows=[1])
     if input_name in data.columns and target_name in data.columns:
@@ -114,24 +114,46 @@ if np.any(np.isnan(data_ppg)):
 
 if np.any(np.isnan(data_resp)):
     print(f"NaNs found in data_resp")
-
+epsilon = 1e-8
 for train_index, test_index in kf.split(data_ppg):
     trainX, testX = data_ppg[train_index, :], data_ppg[test_index, :]
     trainy, testy = data_resp[train_index, :], data_resp[test_index, :]
-
     for i in range(trainX.shape[0]):
-        if trainX[i].max() - trainX[i].min()==0:
-            print("fuckkkk")
-        trainX[i] = -1 + 2*(trainX[i] - trainX[i].min())/(trainX[i].max() - trainX[i].min())
-        trainy[i] = (trainy[i] - trainy[i].min())/(trainy[i].max() - trainy[i].min())
+        ppg_range = trainX[i].max() - trainX[i].min()
+        if ppg_range < epsilon:
+            print(f"Constant train_ppg signal at index {i}, replacing with zeros.")
+            trainX[i] = np.zeros_like(trainX[i])
+        else:
+            trainX[i] = -1 + 2 * (trainX[i] - trainX[i].min()) / (ppg_range + epsilon) #This scales the signal to the range [-1, 1]
+
+
+        resp_range = trainy[i].max() - trainy[i].min()
+        if resp_range < epsilon:
+            print(f"Constant train_resp signal at index {i}, replacing with zeros.")
+            trainy[i] = np.zeros_like(trainy[i])
+        else:
+            trainy[i] = (trainy[i] - trainy[i].min()) / (resp_range + epsilon) #This rescales the signal to have a range between 0 and 1
 
 
     for i in range(testX.shape[0]):
-        testX[i] = -1 + 2*(testX[i] - testX[i].min())/(testX[i].max() - testX[i].min())
-        testy[i] = (testy[i] - testy[i].min())/(testy[i].max() - testy[i].min())
+        ppg_range = testX[i].max() - testX[i].min()
+        if ppg_range < epsilon:
+            print(f"Constant test_ppg signal at index {i}, replacing with zeros.")
+            testX[i] = np.zeros_like(testX[i])
+        else:
+            testX[i] = -1 + 2 * (testX[i] - testX[i].min()) / (ppg_range + epsilon)
+
+
+        resp_range = testy[i].max() - testy[i].min()
+        if resp_range < epsilon:
+            print(f"Constant test_resp signal at index {i}, replacing with zeros.")
+            testy[i] = np.zeros_like(testy[i])
+        else:
+            testy[i] = (testy[i] - testy[i].min()) / (resp_range + epsilon)
+
 
     # print which subject is current test subject
-    print(sub_num)
+    print("sub_num is: ",sub_num)
 
     # shuffle training data
     trainX, trainy = shuffle(trainX, trainy)
@@ -173,9 +195,11 @@ for train_index, test_index in kf.split(data_ppg):
     acc_list_test_epoch = []
     test_error = []
 
+
     #begin training loop
     for epoch in range(num_epochs):
-        for i in range(total_step // batch_size):  # split data into batches
+        epoch_loss = 0  # Track the loss for the entire epoch
+        for i in tqdm(range(total_step // batch_size), desc=f"Epoch {epoch+1}/{num_epochs}", leave=True):  # split data into batches
             trainXT_seg = trainXT[i * batch_size:(i + 1) * batch_size, :, :]
             trainyT_seg = trainyT[i * batch_size:(i + 1) * batch_size, None]
             # Run the forward pass
@@ -184,6 +208,8 @@ for train_index, test_index in kf.split(data_ppg):
             print("here")
             loss = criterion(outputs, trainyT_seg)
 
+            # Track the loss for the epoch
+            epoch_loss += loss.item()
             #loss = d_loss_output[0]
 
             loss_list.append(loss.item())
@@ -193,7 +219,8 @@ for train_index, test_index in kf.split(data_ppg):
             loss.backward()
             optimizer.step()
 
-            
+        avg_loss = epoch_loss / (total_step // batch_size)
+        tqdm.write(f"Epoch {epoch + 1}/{num_epochs} - Average Loss: {avg_loss:.4f}")
         # calculate test error at the end of each epoch
         test_output = model(testXT)
         loss_test = criterion(test_output, testyT[:, None])

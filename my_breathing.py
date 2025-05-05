@@ -169,36 +169,50 @@ for subject_id in range(num_of_subjects):
     # Apply the filter to the signal
 
     epsilon = 1e-8  # Small value to avoid division by zero
+    count = 0
 
+    all = 0
     for i in range(train_ppg.shape[0]):
         ppg_range = train_ppg[i].max() - train_ppg[i].min()
         if ppg_range < epsilon:
             print(f"Constant train_ppg signal at index {i}, replacing with zeros.")
+            count += 1
             train_ppg[i] = np.zeros_like(train_ppg[i])
         else:
             train_ppg[i] = -1 + 2 * (train_ppg[i] - train_ppg[i].min()) / (ppg_range + epsilon)
+            all += 1
 
         resp_range = train_resp[i].max() - train_resp[i].min()
         if resp_range < epsilon:
             print(f"Constant train_resp signal at index {i}, replacing with zeros.")
+            count += 1
             train_resp[i] = np.zeros_like(train_resp[i])
         else:
             train_resp[i] = (train_resp[i] - train_resp[i].min()) / (resp_range + epsilon)
+            all += 1
 
     for i in range(test_ppg.shape[0]):
         ppg_range = test_ppg[i].max() - test_ppg[i].min()
         if ppg_range < epsilon:
             print(f"Constant test_ppg signal at index {i}, replacing with zeros.")
+            count += 1
             test_ppg[i] = np.zeros_like(test_ppg[i])
         else:
             test_ppg[i] = -1 + 2 * (test_ppg[i] - test_ppg[i].min()) / (ppg_range + epsilon)
 
+
         resp_range = test_resp[i].max() - test_resp[i].min()
         if resp_range < epsilon:
             print(f"Constant test_resp signal at index {i}, replacing with zeros.")
+            count += 1
             test_resp[i] = np.zeros_like(test_resp[i])
         else:
             test_resp[i] = (test_resp[i] - test_resp[i].min()) / (resp_range + epsilon)
+
+
+    print("count of constant segments: ",count)
+    print(f"Out of {count + all} segments, {count} are constant, which is {(count * 100) / (count + all):.2f}%")
+
 
 
 
