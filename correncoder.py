@@ -12,6 +12,16 @@ from scipy.signal import resample
 import matplotlib.pyplot as plt
 
 
+
+def plot_loss(train_losses):
+    # Plotting the average epoch loss
+    plt.figure(figsize=(10, 6))
+    plt.plot(train_losses, label="Training Loss")
+    plt.title("Training Loss Over Epochs")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.show()
 # a function that gives a rough indication of breaths per minute error by examining the crossings of 0.5
 # this assumes that the respiratory reference is normalised between 0 and 1.
 def breaths_per_min_zc(output_array_zc, input_array_zc):
@@ -57,7 +67,7 @@ random.seed(seed_val)
 np.random.seed(seed_val)
 
 # set the learning rate for Adam optimisation
-learning_rate = 0.001
+learning_rate = 0.0001
 
 # Select device (GPU if available, otherwise CPU)
 device = torch.device("mps")
@@ -106,6 +116,14 @@ if np.any(np.isnan(data_ppg)):
 
 if np.any(np.isnan(data_resp)):
     print(f"NaNs found in data_resp")
+
+
+# Early stopping configuration
+patience = 20
+
+patience_counter = 0
+
+# Store losses for plotting later
 
 epsilon = 1e-8
 for train_index, test_index in kf.split(data_ppg):
@@ -179,6 +197,8 @@ for train_index, test_index in kf.split(data_ppg):
     acc_list_test_epoch = []
     test_error = []
 
+    train_losses = []
+    best_loss = float('inf')
     # begin training loop
     for epoch in range(num_epochs):
         epoch_loss = 0  # Track the loss for the entire epoch
@@ -201,6 +221,7 @@ for train_index, test_index in kf.split(data_ppg):
             optimizer.step()
 
         avg_loss = epoch_loss / (total_step // batch_size)
+        train_losses.append(avg_loss)
         tqdm.write(f"Epoch {epoch + 1}/{num_epochs} - Average Loss: {avg_loss:.4f}")
 
         # calculate test error at the end of each epoch
@@ -223,9 +244,21 @@ for train_index, test_index in kf.split(data_ppg):
         print("Peaks error bias")
         print(mean_error_bpm[1])
 
+
+        # Early stopping check
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            if patience_counter >= patience:
+                print(f"Early stopping triggered at epoch {epoch + 1}")
+
+                break
+
     # save the PyTorch model files
     torch.save(model.state_dict(), model_path)
-
+    plot_loss(train_losses)
     random_indices = np.random.choice(len(output_array), size=1, replace=False)
     print(random_indices)
     for idx in random_indices:
