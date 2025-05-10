@@ -11,6 +11,30 @@ import torch.nn as nn
 from scipy.signal import resample
 import matplotlib.pyplot as plt
 
+def segment_signal(signal, segment_length, step_size=None):
+    """
+    Splits a 1D signal into segments (windows).
+
+    Args:
+        signal (1D array or list): The raw signal to segment.
+        segment_length (int): Length of each segment.
+        step_size (int, optional): Step size between segments (for overlap).
+                                   Defaults to segment_length (no overlap).
+
+    Returns:
+        segments (2D np.array): Array of shape (num_segments, segment_length)
+    """
+    if step_size is None:
+        step_size = segment_length  # non-overlapping by default
+
+    signal = np.asarray(signal)
+    segments = []
+
+    for start in range(0, len(signal) - segment_length + 1, step_size):
+        segment = signal[start:start + segment_length]
+        segments.append(segment)
+
+    return np.array(segments)
 
 
 def plot_loss(train_losses):
@@ -90,7 +114,11 @@ for ppg_file in tqdm(ppg_csv_files, leave=True):
         ppg_signal = resample(ppg_signal, new_length)
         resp_signal = resample(resp_signal, new_length)
 
-        # append each subject's signal to the list
+        # Segment the signals into non-overlapping windows (use segment length as 16*30)
+        ppg_segments = segment_signal(ppg_signal, segment_length=16 * 30)
+        resp_segments = segment_signal(resp_signal, segment_length=16 * 30)
+
+        # Append the segmented signals to the list
         ppg_list.append(ppg_signal)
         resp_list.append(resp_signal)
 
@@ -178,6 +206,7 @@ for train_index, test_index in kf.split(data_ppg):
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     # ensure correct shape, can also transpose here instead of reshaping
+
     L_in = trainX.shape[-1]
     trainX = trainX.reshape((trainX.shape[0], 1, L_in))
     testX = testX.reshape((testX.shape[0], 1, L_in))
@@ -225,9 +254,11 @@ for train_index, test_index in kf.split(data_ppg):
         tqdm.write(f"Epoch {epoch + 1}/{num_epochs} - Average Loss: {avg_loss:.4f}")
 
         # calculate test error at the end of each epoch
-        test_output = model(testXT)
-        loss_test = criterion(test_output, testyT[:, None])
-        test_error.append((loss_test.item()))
+        model.eval()
+        with torch.no_grad():
+            test_output = model(testXT)
+            loss_test = criterion(test_output, testyT[:, None])
+            test_error.append((loss_test.item()))
 
         output_array = test_output.cpu().detach().numpy()
 
@@ -255,6 +286,8 @@ for train_index, test_index in kf.split(data_ppg):
                 print(f"Early stopping triggered at epoch {epoch + 1}")
 
                 break
+
+        model.train()
 
     # save the PyTorch model files
     torch.save(model.state_dict(), model_path)
