@@ -10,6 +10,7 @@ from model2 import Correncoder_model
 import torch.nn as nn
 from scipy.signal import resample
 import matplotlib.pyplot as plt
+from scipy.signal import butter, filtfilt
 
 def segment_signal(signal, segment_length, step_size=None):
     """
@@ -77,10 +78,17 @@ num_of_subjects = 0
 
 original_fs = 256  # your original sampling rate
 target_fs = 30  # your desired target rate
+cutoff = 1  # Desired cutoff frequency of the filter (Hz)
+order = 8  # Order of the filter
+
+# Design Butterworth low-pass filter
+nyquist = 0.5 * target_fs  # Nyquist Frequency
+normal_cutoff = cutoff / nyquist  # Normalize the frequency
+b, a = butter(order, normal_cutoff, btype='low', analog=False)
 
 # define number of epochs and batch size
 num_epochs = 50
-batch_size = 16
+batch_size = 128
 
 # set a seed for evaluation (optional)
 seed_val = 55
@@ -114,9 +122,11 @@ for ppg_file in tqdm(ppg_csv_files, leave=True):
         ppg_signal = resample(ppg_signal, new_length)
         resp_signal = resample(resp_signal, new_length)
 
+        resp_signal = filtfilt(b, a, resp_signal)
+
         # Segment the signals into non-overlapping windows (use segment length as 16*30)
-        ppg_segments = segment_signal(ppg_signal, segment_length=60 * 30)
-        resp_segments = segment_signal(resp_signal, segment_length=60 * 30)
+        ppg_segments = segment_signal(ppg_signal, segment_length=16 * 30)
+        resp_segments = segment_signal(resp_signal, segment_length=16 * 30)
 
         # Append the segmented signals to the list
         ppg_list.append(ppg_segments)
