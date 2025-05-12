@@ -115,12 +115,12 @@ for ppg_file in tqdm(ppg_csv_files, leave=True):
         resp_signal = resample(resp_signal, new_length)
 
         # Segment the signals into non-overlapping windows (use segment length as 16*30)
-        ppg_segments = segment_signal(ppg_signal, segment_length=16 * 30)
-        resp_segments = segment_signal(resp_signal, segment_length=16 * 30)
+        ppg_segments = segment_signal(ppg_signal, segment_length=60 * 30)
+        resp_segments = segment_signal(resp_signal, segment_length=60 * 30)
 
         # Append the segmented signals to the list
-        ppg_list.append(ppg_signal)
-        resp_list.append(resp_signal)
+        ppg_list.append(ppg_segments)
+        resp_list.append(resp_segments)
 
 # First, find the minimum length
 min_len = min([sig.shape[0] for sig in ppg_list])
@@ -206,10 +206,17 @@ for train_index, test_index in kf.split(data_ppg):
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     # ensure correct shape, can also transpose here instead of reshaping
+    L_in = trainX.size // trainX.shape[0]
+    # L_in = trainX.shape[-1]
+    # Flatten subjects and segments into one batch dimension
+    # Flatten subjects and segments into one batch dimension
+    trainX = trainX.reshape(-1, trainX.shape[-1])  # shape: (total_segments, segment_length)
+    trainX = trainX[:, np.newaxis, :]  # shape: (total_segments, 1, segment_length)
+    trainy = trainy.reshape(-1, trainy.shape[-1])  # shape: (total_segments, segment_length)
 
-    L_in = trainX.shape[-1]
-    trainX = trainX.reshape((trainX.shape[0], 1, L_in))
-    testX = testX.reshape((testX.shape[0], 1, L_in))
+    testX = testX.reshape(-1, testX.shape[-1])  # shape: (total_segments, segment_length)
+    testX = testX[:, np.newaxis, :]  # shape: (total_segments, 1, segment_length)
+    testy = testy.reshape(-1, testy.shape[-1])  # shape: (total_segments, segment_length)
 
     total_step = trainX.shape[0]
 
@@ -234,10 +241,10 @@ for train_index, test_index in kf.split(data_ppg):
         for i in tqdm(range(total_step // batch_size), desc=f"Epoch {epoch + 1}/{num_epochs}",
                       leave=True):  # split data into batches
             trainXT_seg = trainXT[i * batch_size:(i + 1) * batch_size, :, :]
-            trainyT_seg = trainyT[i * batch_size:(i + 1) * batch_size, None]
+            trainyT_seg = trainyT[i * batch_size:(i + 1) * batch_size]
             # Run the forward pass
             outputs = model(trainXT_seg)
-            loss = criterion(outputs, trainyT_seg)
+            loss = criterion(outputs.squeeze(1), trainyT_seg)
 
             # Track the loss for the epoch
             epoch_loss += loss.item()
