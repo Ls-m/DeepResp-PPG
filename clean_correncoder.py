@@ -153,7 +153,7 @@ for ppg_file in tqdm(ppg_csv_files, leave=True):
         ppg_signal = resample(ppg_signal, new_length)
         resp_signal = resample(resp_signal, new_length)
 
-        resp_signal = filtfilt(b, a, resp_signal)
+        # resp_signal = filtfilt(b, a, resp_signal)
 
         # Segment the signals into non-overlapping windows (use segment length as 16*30)
         ppg_segments = segment_signal(ppg_signal, segment_length=16 * 30)
@@ -208,6 +208,11 @@ if np.any(np.isnan(data_resp)):
 fold_test_losses = []
 logo = LeaveOneGroupOut()
 criterion = torch.nn.MSELoss()
+
+# Normalize test data once and save
+testX_norm, testy_norm = normalize_test_data(testX.copy(), testy.copy())
+np.savez('test_data.npz', testX=testX_norm, testy=testy_norm)
+print("Saved normalized test data.")
 
 for fold, (train_idx, val_idx) in enumerate(logo.split(data_ppg[train_val_subjects], data_resp[train_val_subjects], groups=train_val_subjects)):
     print(f"Fold {fold + 1}/{len(train_val_subjects)}")
@@ -289,7 +294,8 @@ for fold, (train_idx, val_idx) in enumerate(logo.split(data_ppg[train_val_subjec
     model.eval()
 
     # Normalize test data with the same function
-    testX_norm, testy_norm = normalize_test_data(testX.copy(), testy.copy())
+    # testX_norm, testy_norm = normalize_test_data(testX.copy(), testy.copy())
+
 
     testX_flat = testX_norm.reshape(-1, testX_norm.shape[-1])[:, np.newaxis, :]
     testy_flat = testy_norm.reshape(-1, testy_norm.shape[-1])
@@ -306,7 +312,9 @@ for fold, (train_idx, val_idx) in enumerate(logo.split(data_ppg[train_val_subjec
 
 print(f"Average Test Loss over all folds: {np.mean(fold_test_losses):.4f}")
 
-
+# After fold_test_losses is computed
+np.save('fold_test_losses.npy', np.array(fold_test_losses))
+print("Saved fold test losses.")
 # Number of random samples to pick
 num_samples = 5
 
