@@ -8,9 +8,9 @@ n_out3 = 8
 n_outputs = 1
 
 # define kernel lengths, padding, dilation, stride, and dropout
-kernel_size = 150
-kernel_size2 = 75
-kernel_size3 = 50
+kernel_size = 75
+kernel_size2 = 50
+kernel_size3 = 30
 padding = 20
 dilation = 1
 stride = 1
