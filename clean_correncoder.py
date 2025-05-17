@@ -14,6 +14,43 @@ from scipy.signal import butter, filtfilt
 from sklearn.model_selection import GroupShuffleSplit, GroupKFold
 from sklearn.model_selection import LeaveOneGroupOut
 
+def remove_flat(data_ppg,data_resp):
+    # Set your flatness threshold
+    FLAT_THRESHOLD = 1e-2  # or whatever you prefer
+
+    # data_ppg shape: (num_subjects, num_segments, segment_length)
+    # data_resp shape: (num_subjects, num_segments, segment_length)
+
+    # Find flat segments
+    bad_ppg = np.abs(data_ppg.max(axis=-1) - data_ppg.min(axis=-1)) < FLAT_THRESHOLD  # shape: (subjects, segments)
+    bad_resp = np.abs(data_resp.max(axis=-1) - data_resp.min(axis=-1)) < FLAT_THRESHOLD
+    bad_mask = np.logical_or(bad_ppg, bad_resp)
+
+    # Print some stats
+    print(f"Total segments: {data_ppg.size // data_ppg.shape[-1]}")
+    print(f"Flat segments: {bad_mask.sum()}")
+
+    # Keep only the "good" segments for each subject
+    data_ppg_clean = []
+    data_resp_clean = []
+    removed_segments_count = 0
+
+    for subj in range(data_ppg.shape[0]):
+        mask = ~bad_mask[subj]  # mask for good segments in this subject
+        num_before = data_ppg[subj].shape[0]
+        num_after = mask.sum()
+        removed_segments_count += (num_before - num_after)
+        if num_after > 0:  # keep only subjects with good segments left
+            data_ppg_clean.append(data_ppg[subj][mask])
+            data_resp_clean.append(data_resp[subj][mask])
+
+    data_ppg_clean = np.array(data_ppg_clean, dtype=object)  # Use dtype=object if lengths vary
+    data_resp_clean = np.array(data_resp_clean, dtype=object)
+
+    print(f"Total removed segments: {removed_segments_count}")
+    print(f"Subjects after cleaning: {len(data_ppg_clean)}")
+    return data_ppg_clean, data_resp_clean
+
 def segment_signal(signal, segment_length, step_size=None):
     """
     Splits a 1D signal into segments (windows).
@@ -152,7 +189,14 @@ for ppg_file in tqdm(ppg_csv_files, leave=True):
 
         ppg_signal = resample(ppg_signal, new_length)
         resp_signal = resample(resp_signal, new_length)
+        # print(new_length)
+        # orig_indices = np.arange(new_length) * (256 - 1) / (30 - 1)
 
+        # To get the closest integer indices:
+        # closest_indices = np.round(orig_indices).astype(int)
+        # print(closest_indices[7*480:8*480])  # integer indices in the original array
+        #
+        # print(ppg_file," ",closest_indices)
         # resp_signal = filtfilt(b, a, resp_signal)
 
         # Segment the signals into non-overlapping windows (use segment length as 16*30)
@@ -208,6 +252,66 @@ if np.any(np.isnan(data_resp)):
 fold_test_losses = []
 logo = LeaveOneGroupOut()
 criterion = torch.nn.MSELoss()
+
+
+# Identify flat PPG or resp segments
+# bad_ppg = np.abs(testX.max(axis=-1) - testX.min(axis=-1)) < 1e-2
+# bad_resp = np.abs(testy.max(axis=-1) - testy.min(axis=-1)) < 1e-2
+# bad_mask = np.logical_or(bad_ppg, bad_resp)
+# print("Number of flat segments:", bad_mask.sum())
+#
+# indices = np.argwhere(bad_mask)
+# for i in range(min(5, len(indices))):
+#     s, seg = indices[i]
+#     plt.figure()
+#     plt.plot(testX[s, seg], label='PPG')
+#     plt.plot(testy[s, seg], label='Resp')
+#     plt.title(f"Nearly-Flat Segment subj={s} seg={seg}")
+#     plt.legend()
+#     plt.show()
+# # --- Visualize raw signals before normalization ---
+#
+# num_subjects = testX.shape[0]
+# num_segments = testX.shape[1]
+#
+# # Pick 3 random subject-segment pairs to visualize
+# np.random.seed(42)
+# pairs = []
+# while len(pairs) < 3:
+#     s = np.random.randint(0, num_subjects)
+#     seg = np.random.randint(0, num_segments)
+#     if (s, seg) not in pairs:
+#         pairs.append((s, seg))
+#
+# plt.figure(figsize=(16, 5))
+# for i, (s, seg) in enumerate(pairs):
+#     plt.subplot(2, 3, i+1)
+#     plt.plot(testX[s, seg], label='Raw PPG')
+#     plt.plot(testy[s, seg], label='Raw Resp')
+#     plt.title(f'Raw: subj={s} seg={seg}')
+#     plt.legend()
+# plt.suptitle('Raw PPG & Respiration segments before normalization')
+# plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+# plt.show()
+#
+# # --- Now normalize and plot the same segments after normalization ---
+# testX_norm, testy_norm = normalize_test_data(testX.copy(), testy.copy())
+#
+# plt.figure(figsize=(16, 5))
+# for i, (s, seg) in enumerate(pairs):
+#     plt.subplot(2, 3, i+1)
+#     plt.plot(testX_norm[s, seg], label='Norm PPG')
+#     plt.plot(testy_norm[s, seg], label='Norm Resp')
+#     plt.title(f'Norm: subj={s} seg={seg}')
+#     plt.legend()
+# plt.suptitle('PPG & Respiration segments after normalization')
+# plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+# plt.show()
+
+
+# exit()
+
+
 
 # Normalize test data once and save
 testX_norm, testy_norm = normalize_test_data(testX.copy(), testy.copy())
