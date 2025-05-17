@@ -14,42 +14,54 @@ from scipy.signal import butter, filtfilt
 from sklearn.model_selection import GroupShuffleSplit, GroupKFold
 from sklearn.model_selection import LeaveOneGroupOut
 
-def remove_flat(data_ppg,data_resp):
-    # Set your flatness threshold
-    FLAT_THRESHOLD = 1e-2  # or whatever you prefer
+def remove_flat(data_ppg, data_resp):
+    FLAT_THRESHOLD = 1e-2
+    bad_ppg = np.abs(data_ppg.max(axis=-1) - data_ppg.min(axis=-1)) < FLAT_THRESHOLD
+    bad_resp = np.abs(data_resp.max(axis=-1) - data_resp.min(axis=-1)) < FLAT_THRESHOLD
+    bad_mask = np.logical_or(bad_ppg, bad_resp)
+    print(f"Total segments: {data_ppg.size // data_ppg.shape[-1]}")
+    print(f"Flat segments: {bad_mask.sum()}")
+    data_ppg_clean = []
+    data_resp_clean = []
+    subject_ids_clean = []
+    for subj in range(data_ppg.shape[0]):
+        num_flat = bad_mask[subj].sum()
+        print(f"Subject {subj}: flat segments = {num_flat}, total segments = {data_ppg.shape[1]}")
+        mask = ~bad_mask[subj]
+        if mask.sum() > 0:
+            data_ppg_clean.append(data_ppg[subj][mask])
+            data_resp_clean.append(data_resp[subj][mask])
+            subject_ids_clean.extend([subj] * mask.sum())
+    data_ppg_clean = np.concatenate(data_ppg_clean, axis=0)
+    data_resp_clean = np.concatenate(data_resp_clean, axis=0)
+    subject_ids_clean = np.array(subject_ids_clean)
+    print(f"Segments after cleaning: {data_ppg_clean.shape[0]}")
+    return data_ppg_clean, data_resp_clean, subject_ids_clean
 
-    # data_ppg shape: (num_subjects, num_segments, segment_length)
-    # data_resp shape: (num_subjects, num_segments, segment_length)
-
-    # Find flat segments
-    bad_ppg = np.abs(data_ppg.max(axis=-1) - data_ppg.min(axis=-1)) < FLAT_THRESHOLD  # shape: (subjects, segments)
+def remove_subject(data_ppg, data_resp, subject_ids):
+    # Calculate flat segments per subject
+    FLAT_THRESHOLD = 1e-2
+    bad_ppg = np.abs(data_ppg.max(axis=-1) - data_ppg.min(axis=-1)) < FLAT_THRESHOLD
     bad_resp = np.abs(data_resp.max(axis=-1) - data_resp.min(axis=-1)) < FLAT_THRESHOLD
     bad_mask = np.logical_or(bad_ppg, bad_resp)
 
-    # Print some stats
-    print(f"Total segments: {data_ppg.size // data_ppg.shape[-1]}")
-    print(f"Flat segments: {bad_mask.sum()}")
-
-    # Keep only the "good" segments for each subject
-    data_ppg_clean = []
-    data_resp_clean = []
-    removed_segments_count = 0
-
+    # Find subjects where all segments are flat
+    subjects_to_remove = []
     for subj in range(data_ppg.shape[0]):
-        mask = ~bad_mask[subj]  # mask for good segments in this subject
-        num_before = data_ppg[subj].shape[0]
-        num_after = mask.sum()
-        removed_segments_count += (num_before - num_after)
-        if num_after > 0:  # keep only subjects with good segments left
-            data_ppg_clean.append(data_ppg[subj][mask])
-            data_resp_clean.append(data_resp[subj][mask])
+        if bad_mask[subj].sum() > 1000:
+            print(f"Marking subject {subj} for removal (all segments flat)")
+            subjects_to_remove.append(subj)
 
-    data_ppg_clean = np.array(data_ppg_clean, dtype=object)  # Use dtype=object if lengths vary
-    data_resp_clean = np.array(data_resp_clean, dtype=object)
+    subjects_to_keep = [i for i in range(data_ppg.shape[0]) if i not in subjects_to_remove]
 
-    print(f"Total removed segments: {removed_segments_count}")
-    print(f"Subjects after cleaning: {len(data_ppg_clean)}")
-    return data_ppg_clean, data_resp_clean
+    # Remove the identified subjects
+    data_ppg = data_ppg[subjects_to_keep]
+    data_resp = data_resp[subjects_to_keep]
+    subject_ids = subject_ids[subjects_to_keep]  # if you have subject_ids
+
+    print("Subjects removed (all segments flat):", subjects_to_remove)
+    print("Shape after subject removal:", data_ppg.shape)
+    return data_ppg, data_resp, subject_ids
 
 def segment_signal(signal, segment_length, step_size=None):
     """
@@ -153,7 +165,7 @@ b, a = butter(order, normal_cutoff, btype='low', analog=False)
 
 # define number of epochs and batch size
 num_epochs = 50
-batch_size = 128
+batch_size = 256
 
 # set a seed for evaluation (optional)
 seed_val = 55
@@ -221,8 +233,10 @@ print(f"data_ppg shape: {data_ppg.shape}")
 print(f"data_resp shape: {data_resp.shape}")
 
 
+remove_flat(data_ppg, data_resp)
 subject_ids = np.arange(num_of_subjects)
-
+data_ppg, data_resp, subject_ids = remove_subject(data_ppg, data_resp,subject_ids)
+subject_ids = np.arange(data_ppg.shape[0])
 # Step 2: Split subjects into train_val and test sets (e.g. 80% train_val, 20% test)
 gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=seed_val)
 train_val_idx, test_idx = next(gss.split(data_ppg, groups=subject_ids))
