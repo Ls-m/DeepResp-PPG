@@ -14,6 +14,40 @@ from scipy.signal import butter, filtfilt
 from sklearn.model_selection import GroupShuffleSplit, GroupKFold
 from sklearn.model_selection import LeaveOneGroupOut
 
+
+class MSECorrelationLoss(nn.Module):
+    def __init__(self, alpha=0.5):
+        super(MSECorrelationLoss, self).__init__()
+        self.mse = nn.MSELoss()
+        self.alpha = alpha  # weight for correlation loss
+
+    def forward(self, y_pred, y_true):
+        mse_loss = self.mse(y_pred, y_true)
+
+        # Flatten to (batch, -1) for segment-wise correlation if needed
+        y_pred_flat = y_pred.view(y_pred.size(0), -1)
+        y_true_flat = y_true.view(y_true.size(0), -1)
+
+        # Calculate mean
+        mean_pred = torch.mean(y_pred_flat, dim=1, keepdim=True)
+        mean_true = torch.mean(y_true_flat, dim=1, keepdim=True)
+
+        # Subtract mean
+        y_pred_centered = y_pred_flat - mean_pred
+        y_true_centered = y_true_flat - mean_true
+
+        # Compute correlation per batch and average
+        numerator = torch.sum(y_pred_centered * y_true_centered, dim=1)
+        denominator = torch.sqrt(torch.sum(y_pred_centered ** 2, dim=1) * torch.sum(y_true_centered ** 2, dim=1) + 1e-8)
+        corr = numerator / denominator
+
+        # The correlation loss (maximize corr -> minimize (1 - corr))
+        corr_loss = 1 - torch.mean(corr)
+
+        # Combine losses
+        total_loss = mse_loss + self.alpha * corr_loss
+        return total_loss
+
 def remove_flat(data_ppg, data_resp):
     FLAT_THRESHOLD = 1e-2
     bad_ppg = np.abs(data_ppg.max(axis=-1) - data_ppg.min(axis=-1)) < FLAT_THRESHOLD
@@ -212,8 +246,8 @@ for ppg_file in tqdm(ppg_csv_files, leave=True):
         # resp_signal = filtfilt(b, a, resp_signal)
 
         # Segment the signals into non-overlapping windows (use segment length as 16*30)
-        ppg_segments = segment_signal(ppg_signal, segment_length=16 * 30)
-        resp_segments = segment_signal(resp_signal, segment_length=16 * 30)
+        ppg_segments = segment_signal(ppg_signal, segment_length=16 * 30,step_size=470)
+        resp_segments = segment_signal(resp_signal, segment_length=16 * 30,step_size=470)
 
         # Append the segmented signals to the list
         ppg_list.append(ppg_segments)
@@ -265,8 +299,8 @@ if np.any(np.isnan(data_resp)):
 
 fold_test_losses = []
 logo = LeaveOneGroupOut()
-criterion = torch.nn.MSELoss()
-
+# criterion = torch.nn.MSELoss()
+criterion = MSECorrelationLoss(alpha=0.5)  # adjust alpha to your needs
 
 # Identify flat PPG or resp segments
 # bad_ppg = np.abs(testX.max(axis=-1) - testX.min(axis=-1)) < 1e-2
