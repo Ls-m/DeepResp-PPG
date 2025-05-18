@@ -48,6 +48,23 @@ class MSECorrelationLoss(nn.Module):
         total_loss = mse_loss + self.alpha * corr_loss
         return total_loss
 
+
+def evaluate_metrics(y_true, y_pred):
+    # Convert tensors to numpy if needed
+    if isinstance(y_true, torch.Tensor):
+        y_true = y_true.cpu().numpy()
+    if isinstance(y_pred, torch.Tensor):
+        y_pred = y_pred.cpu().numpy()
+
+    # Flatten to 1D arrays if needed
+    y_true_flat = y_true.reshape(-1)
+    y_pred_flat = y_pred.reshape(-1)
+
+    mae = np.mean(np.abs(y_true_flat - y_pred_flat))
+    rmse = np.sqrt(np.mean((y_true_flat - y_pred_flat) ** 2))
+    corr, _ = pearsonr(y_true_flat, y_pred_flat)  # Pearson correlation coefficient
+
+    return mae, rmse, corr
 def remove_flat(data_ppg, data_resp):
     FLAT_THRESHOLD = 1e-2
     bad_ppg = np.abs(data_ppg.max(axis=-1) - data_ppg.min(axis=-1)) < FLAT_THRESHOLD
@@ -199,7 +216,7 @@ b, a = butter(order, normal_cutoff, btype='low', analog=False)
 
 # define number of epochs and batch size
 num_epochs = 50
-batch_size = 256
+batch_size = 512
 
 # set a seed for evaluation (optional)
 seed_val = 55
@@ -246,8 +263,8 @@ for ppg_file in tqdm(ppg_csv_files, leave=True):
         # resp_signal = filtfilt(b, a, resp_signal)
 
         # Segment the signals into non-overlapping windows (use segment length as 16*30)
-        ppg_segments = segment_signal(ppg_signal, segment_length=16 * 30,step_size=470)
-        resp_segments = segment_signal(resp_signal, segment_length=16 * 30,step_size=470)
+        ppg_segments = segment_signal(ppg_signal, segment_length=16 * 30,step_size=242)
+        resp_segments = segment_signal(resp_signal, segment_length=16 * 30,step_size=242)
 
         # Append the segmented signals to the list
         ppg_list.append(ppg_segments)
@@ -300,7 +317,7 @@ if np.any(np.isnan(data_resp)):
 fold_test_losses = []
 logo = LeaveOneGroupOut()
 # criterion = torch.nn.MSELoss()
-criterion = MSECorrelationLoss(alpha=0.5)  # adjust alpha to your needs
+criterion = MSECorrelationLoss(alpha=0.3)  # adjust alpha to your needs
 
 # Identify flat PPG or resp segments
 # bad_ppg = np.abs(testX.max(axis=-1) - testX.min(axis=-1)) < 1e-2
