@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from scipy.signal import butter, filtfilt
 from sklearn.model_selection import GroupShuffleSplit, GroupKFold
 from sklearn.model_selection import LeaveOneGroupOut
-
+from scipy.stats import pearsonr
 
 class MSECorrelationLoss(nn.Module):
     def __init__(self, alpha=0.5):
@@ -48,6 +48,19 @@ class MSECorrelationLoss(nn.Module):
         total_loss = mse_loss + self.alpha * corr_loss
         return total_loss
 
+
+def butter_bandpass(lowcut, highcut, fs, order=5):
+    nyquist = 0.5 * fs
+    low = lowcut / nyquist
+    high = highcut / nyquist
+    b, a = butter(order, [low, high], btype='band')
+    return b, a
+
+def apply_bandpass_filter(data, lowcut, highcut, fs, order=5):
+    b, a = butter_bandpass(lowcut, highcut, fs, order=order)
+    # data shape: (segments, length) or (length,)
+    filtered = filtfilt(b, a, data, axis=-1)
+    return filtered
 
 def evaluate_metrics(y_true, y_pred):
     # Convert tensors to numpy if needed
@@ -235,7 +248,8 @@ patience = 20
 device = torch.device("mps")
 print(f"Using device: {device}")
 
-
+lowcut = 0.1   # example lower cutoff (Hz), adjust as needed
+highcut = 1.1  # example upper cutoff (Hz), adjust as needed
 ppg_list = []
 resp_list = []
 print("data processing...")
@@ -262,6 +276,8 @@ for ppg_file in tqdm(ppg_csv_files, leave=True):
         # print(ppg_file," ",closest_indices)
         # resp_signal = filtfilt(b, a, resp_signal)
 
+        ppg_signal = apply_bandpass_filter(ppg_signal, lowcut, highcut, target_fs)
+        resp_signal = apply_bandpass_filter(resp_signal, lowcut, highcut, target_fs)
         # Segment the signals into non-overlapping windows (use segment length as 16*30)
         ppg_segments = segment_signal(ppg_signal, segment_length=16 * 30,step_size=242)
         resp_segments = segment_signal(resp_signal, segment_length=16 * 30,step_size=242)
@@ -383,6 +399,9 @@ testX_norm, testy_norm = normalize_test_data(testX.copy(), testy.copy())
 np.savez('test_data.npz', testX=testX_norm, testy=testy_norm)
 print("Saved normalized test data.")
 
+fold_maes = []
+fold_rmses = []
+fold_corrs = []
 for fold, (train_idx, val_idx) in enumerate(logo.split(data_ppg[train_val_subjects], data_resp[train_val_subjects], groups=train_val_subjects)):
     print(f"Fold {fold + 1}/{len(train_val_subjects)}")
 
@@ -476,11 +495,19 @@ for fold, (train_idx, val_idx) in enumerate(logo.split(data_ppg[train_val_subjec
         test_outputs = model(testXT)
         test_loss = criterion(test_outputs.squeeze(1), testyT).item()
 
+        # Compute metrics
+        mae, rmse, corr = evaluate_metrics(testyT, test_outputs.squeeze(1))
+
     print(f"Fold {fold + 1} Test Loss: {test_loss:.4f}")
     fold_test_losses.append(test_loss)
+    fold_maes.append(mae)
+    fold_rmses.append(rmse)
+    fold_corrs.append(corr)
 
 print(f"Average Test Loss over all folds: {np.mean(fold_test_losses):.4f}")
-
+print(f"Average MAE over folds: {np.mean(fold_maes):.4f} ± {np.std(fold_maes):.4f}")
+print(f"Average RMSE over folds: {np.mean(fold_rmses):.4f} ± {np.std(fold_rmses):.4f}")
+print(f"Average Correlation over folds: {np.mean(fold_corrs):.4f} ± {np.std(fold_corrs):.4f}")
 # After fold_test_losses is computed
 np.save('fold_test_losses.npy', np.array(fold_test_losses))
 print("Saved fold test losses.")
@@ -499,8 +526,8 @@ test_samples = torch.from_numpy(testX_flat[random_indices].astype(np.float32)).t
 
 # Load all best models and collect predictions
 all_predictions = []
-
-for fold in range(1, len(train_val_subjects) + 1):  # assuming folds == train_val_subjects count
+num_folds = 19
+for fold in range(1, len(num_folds) + 1):  # assuming folds == train_val_subjects count
     model = Correncoder_model().to(device)
     model.load_state_dict(torch.load(f"best_model_fold_{fold}.pth"))
     model.eval()
