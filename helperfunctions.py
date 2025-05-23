@@ -5,6 +5,55 @@ import numpy as np
 from scipy.stats import pearsonr
 
 
+def plot_preprocessing(original, resampled, filtered, fs_orig, fs_target, file_name, label='PPG', seconds=20):
+    """
+    Plot original, resampled, and filtered signals (zoomed on first N seconds).
+    """
+    plt.figure(figsize=(16, 4))
+    N = int(seconds * fs_orig)
+    N_resamp = int(seconds * fs_target)
+
+    # Original
+    plt.subplot(1, 3, 1)
+    plt.plot(np.arange(N) / fs_orig, original[:N], color='gray')
+    plt.title('Original')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Amplitude')
+
+    # Resampled
+    plt.subplot(1, 3, 2)
+    plt.plot(np.arange(N_resamp) / fs_target, resampled[:N_resamp], color='orange')
+    plt.title('Resampled')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Amplitude')
+
+    # Filtered
+    plt.subplot(1, 3, 3)
+    plt.plot(np.arange(N_resamp) / fs_target, filtered[:N_resamp], color='blue')
+    plt.title('Filtered (Resampled + Bandpass)')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Amplitude')
+
+    plt.suptitle(f"{label} | {file_name}")
+    plt.tight_layout()
+    plt.show()
+def plot_fft(signal, fs, label, filename=None, xlim=None):
+    """Plot the FFT of the signal up to xlim Hz (default: Nyquist)."""
+    N = len(signal)
+    fft = np.fft.fft(signal)
+    freqs = np.fft.fftfreq(N, d=1/fs)
+    mask = freqs >= 0
+    plt.figure(figsize=(8, 4))
+    plt.plot(freqs[mask], np.abs(fft)[mask])
+    plt.title(f"FFT of {label}" + (f" | {filename}" if filename else ""))
+    plt.xlabel("Frequency (Hz)")
+    plt.ylabel("Magnitude")
+    plt.ylim(0, 9e5)
+    if xlim:
+        plt.xlim([0, xlim])
+    plt.tight_layout()
+    plt.show()
+
 def butter_bandpass(lowcut, highcut, fs, order=5):
     nyquist = 0.5 * fs
     low = lowcut / nyquist

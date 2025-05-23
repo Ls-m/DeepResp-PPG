@@ -7,6 +7,7 @@ import random
 from sklearn.utils import shuffle
 from sklearn.model_selection import KFold
 
+
 from helperfunctions import remove_flat_subjects
 from model2 import Correncoder_model
 import torch.nn as nn
@@ -129,16 +130,23 @@ for ppg_file in tqdm(ppg_csv_files, leave=True):
         duration_seconds = ppg_signal.shape[0] / ORIGINAL_FS
         new_length = int(duration_seconds * TARGET_FS)
 
-        ppg_signal = resample(ppg_signal, new_length)
-        resp_signal = resample(resp_signal, new_length)
+        ppg_resampled = resample(ppg_signal, new_length)
+        resp_resampled = resample(resp_signal, new_length)
 
         # --- filter both signals ---
-        ppg_signal = apply_bandpass_filter(ppg_signal, LOWCUT, HIGHCUT, TARGET_FS)
-        resp_signal = apply_bandpass_filter(resp_signal, LOWCUT, HIGHCUT, TARGET_FS)
+        ppg_filtered = apply_bandpass_filter(ppg_resampled, LOWCUT, HIGHCUT, TARGET_FS)
+        resp_filtered = apply_bandpass_filter(resp_resampled, LOWCUT, HIGHCUT, TARGET_FS)
 
+        # --- plot the steps ---
+        # PLOT for the first few subjects only
+        if num_of_subjects <= 2:
+            plot_preprocessing(ppg_signal, ppg_resampled, ppg_filtered, fs_orig=256, fs_target=30, file_name=ppg_file,
+                               label='PPG', seconds=20)
+            plot_fft(ppg_resampled, TARGET_FS, label="PPG (Original)", filename=ppg_file, xlim=1.5)
+            plot_fft(ppg_filtered, TARGET_FS, label="PPG (Filtered)", filename=ppg_file, xlim=1.5)
         # --- segment both signals ---
-        ppg_segments = segment_signal(ppg_signal, segment_length=SEGMENT_LENGTH,step_size=STEP_SIZE)
-        resp_segments = segment_signal(resp_signal, segment_length=SEGMENT_LENGTH,step_size=STEP_SIZE)
+        ppg_segments = segment_signal(ppg_filtered, segment_length=SEGMENT_LENGTH,step_size=STEP_SIZE)
+        resp_segments = segment_signal(resp_filtered, segment_length=SEGMENT_LENGTH,step_size=STEP_SIZE)
 
         # --- append the signals to the list ---
         ppg_list.append(ppg_segments)
