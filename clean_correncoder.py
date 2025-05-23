@@ -18,6 +18,9 @@ from sklearn.model_selection import LeaveOneGroupOut
 from scipy.stats import pearsonr
 from helperfunctions import *
 
+
+
+
 class MSECorrelationLoss(nn.Module):
     def __init__(self, alpha=0.5):
         super(MSECorrelationLoss, self).__init__()
@@ -53,8 +56,6 @@ class MSECorrelationLoss(nn.Module):
 
 
 
-
-
 # a function that gives a rough indication of breaths per minute error by examining the crossings of 0.5
 # this assumes that the respiratory reference is normalised between 0 and 1.
 def breaths_per_min_zc(output_array_zc, input_array_zc):
@@ -77,73 +78,67 @@ def breaths_per_min_zc(output_array_zc, input_array_zc):
     return mean_abs_error, mean_error
 
 
+# --- Configurations ---
+DATA_PATH = "/Users/eli/Downloads/PPG Data/csv"
+INPUT_NAME = 'PPG'
+TARGET_NAME = 'NASAL CANULA'
+ppg_csv_files = [f for f in os.listdir(DATA_PATH) if f.endswith('.csv') and not f.startswith('.DS_Store')]
 
-ppg_csv_path = "/Users/eli/Downloads/PPG Data/csv"
-ppg_csv_files = [f for f in os.listdir(ppg_csv_path) if f.endswith('.csv') and not f.startswith('.DS_Store')]
-input_name = 'PPG'
-target_name = 'NASAL CANULA'
+ORIGINAL_FS = 256  # your original sampling rate
+TARGET_FS = 30  # your desired target rate
+LOWCUT = 0.1
+HIGHCUT = 1.1
 
-num_of_subjects = 0
-original_fs = 256  # your original sampling rate
-target_fs = 30  # your desired target rate
+SEGMENT_LENGTH = 16 * 30
+STEP_SIZE = 242
 
-cutoff = 1  # Desired cutoff frequency of the filter (Hz)
-order = 8  # Order of the filter
-# Design Butterworth low-pass filter
-nyquist = 0.5 * target_fs  # Nyquist Frequency
-normal_cutoff = cutoff / nyquist  # Normalize the frequency
-b, a = butter(order, normal_cutoff, btype='low', analog=False)
+NUM_EPOCHS = 50
+BATCH_SIZE = 512
+LEARNING_RATE = 1e-4
+PATIENCE = 20
+LR_SCHEDULER_PATIENCE = 8  # Lower than early stopping patience
 
-# define number of epochs and batch size
-num_epochs = 50
-batch_size = 512
 
-# set a seed for evaluation (optional)
-seed_val = 55
+SEED = 55
 print("Seed")
-print(seed_val)
-torch.manual_seed(seed_val)
-random.seed(seed_val)
-np.random.seed(seed_val)
+print(SEED)
+# --- Set seeds ---
+torch.manual_seed(SEED)
+random.seed(SEED)
+np.random.seed(SEED)
 
-# set the learning rate for Adam optimisation
-learning_rate = 0.0001
 
-patience = 20
-lr_scheduler_patience = 8  # Lower than early stopping patience
-# Select device (GPU if available, otherwise CPU)
 device = torch.device("mps")
 print(f"Using device: {device}")
 
-lowcut = 0.1   # example lower cutoff (Hz), adjust as needed
-highcut = 1.1  # example upper cutoff (Hz), adjust as needed
 ppg_list = []
 resp_list = []
+num_of_subjects = 0
 print("data processing...")
 for ppg_file in tqdm(ppg_csv_files, leave=True):
-    data = pd.read_csv(os.path.join(ppg_csv_path, ppg_file), sep='\t', index_col='Time', skiprows=[1])
-    if input_name in data.columns and target_name in data.columns:
+    data = pd.read_csv(os.path.join(DATA_PATH, ppg_file), sep='\t', index_col='Time', skiprows=[1])
+    if INPUT_NAME in data.columns and TARGET_NAME in data.columns:
 
         num_of_subjects += 1
 
         # --- extract both signals ---
-        ppg_signal = data[input_name].to_numpy()  # extract the PPG signal
-        resp_signal = data[target_name].to_numpy()  # extract the target signal (NASAL CANULA, AIRFLOW, etc.)
+        ppg_signal = data[INPUT_NAME].to_numpy()  # extract the PPG signal
+        resp_signal = data[TARGET_NAME].to_numpy()  # extract the target signal (NASAL CANULA, AIRFLOW, etc.)
 
         # --- Resample both signals ---
-        duration_seconds = ppg_signal.shape[0] / original_fs
-        new_length = int(duration_seconds * target_fs)
+        duration_seconds = ppg_signal.shape[0] / ORIGINAL_FS
+        new_length = int(duration_seconds * TARGET_FS)
 
         ppg_signal = resample(ppg_signal, new_length)
         resp_signal = resample(resp_signal, new_length)
 
         # --- filter both signals ---
-        ppg_signal = apply_bandpass_filter(ppg_signal, lowcut, highcut, target_fs)
-        resp_signal = apply_bandpass_filter(resp_signal, lowcut, highcut, target_fs)
+        ppg_signal = apply_bandpass_filter(ppg_signal, LOWCUT, HIGHCUT, TARGET_FS)
+        resp_signal = apply_bandpass_filter(resp_signal, LOWCUT, HIGHCUT, TARGET_FS)
 
         # --- segment both signals ---
-        ppg_segments = segment_signal(ppg_signal, segment_length=32 * 30,step_size=242)
-        resp_segments = segment_signal(resp_signal, segment_length=32 * 30,step_size=242)
+        ppg_segments = segment_signal(ppg_signal, segment_length=SEGMENT_LENGTH,step_size=STEP_SIZE)
+        resp_segments = segment_signal(resp_signal, segment_length=SEGMENT_LENGTH,step_size=STEP_SIZE)
 
         # --- append the signals to the list ---
         ppg_list.append(ppg_segments)
@@ -172,7 +167,7 @@ check_null_or_empty(data_ppg, "data_ppg")
 check_null_or_empty(data_resp, "data_resp")
 
 # --- split to train and test sets ---
-gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=seed_val)
+gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=SEED)
 train_val_idx, test_idx = next(gss.split(data_ppg, groups=subject_ids))
 
 train_val_subjects = subject_ids[train_val_idx]
@@ -232,9 +227,9 @@ for fold, (train_idx, val_idx) in enumerate(logo.split(data_ppg[train_val_subjec
     total_step = trainXT.shape[0]
 
     model = Correncoder_model().to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
     lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', patience=lr_scheduler_patience, factor=0.5, verbose=True
+        optimizer, mode='min', patience=LR_SCHEDULER_PATIENCE, factor=0.5, verbose=True
     )
 
     best_val_loss = float('inf')
@@ -243,14 +238,14 @@ for fold, (train_idx, val_idx) in enumerate(logo.split(data_ppg[train_val_subjec
     train_losses = []
     val_losses = []
 
-    for epoch in range(num_epochs):
+    for epoch in range(NUM_EPOCHS):
         model.train()
         epoch_loss = 0
 
-        with tqdm(range(0, total_step, batch_size), desc=f"Epoch {epoch + 1}/{num_epochs}", leave=False) as pbar:
+        with tqdm(range(0, total_step, BATCH_SIZE), desc=f"Epoch {epoch + 1}/{NUM_EPOCHS}", leave=False) as pbar:
             for i in pbar:
-                batch_X = trainXT[i:i + batch_size]
-                batch_y = trainyT[i:i + batch_size]
+                batch_X = trainXT[i:i + BATCH_SIZE]
+                batch_y = trainyT[i:i + BATCH_SIZE]
                 optimizer.zero_grad()
                 outputs = model(batch_X)
                 loss = criterion(outputs.squeeze(1), batch_y)
@@ -270,7 +265,7 @@ for fold, (train_idx, val_idx) in enumerate(logo.split(data_ppg[train_val_subjec
 
         # Step the LR scheduler
         lr_scheduler.step(val_loss)
-        print(f"Epoch {epoch + 1}/{num_epochs} Train Loss: {avg_train_loss:.4f} Val Loss: {val_loss:.4f}")
+        print(f"Epoch {epoch + 1}/{NUM_EPOCHS} Train Loss: {avg_train_loss:.4f} Val Loss: {val_loss:.4f}")
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -278,7 +273,7 @@ for fold, (train_idx, val_idx) in enumerate(logo.split(data_ppg[train_val_subjec
             torch.save(model.state_dict(), f"best_model_fold_{fold + 1}.pth")
         else:
             patience_counter += 1
-            if patience_counter >= patience:
+            if patience_counter >= PATIENCE:
                 print(f"Early stopping at epoch {epoch + 1}")
                 break
 
@@ -318,16 +313,19 @@ print(f"Average Correlation over folds: {np.mean(fold_corrs):.4f} ± {np.std(fol
 # After fold_test_losses is computed
 np.save('fold_test_losses.npy', np.array(fold_test_losses))
 print("Saved fold test losses.")
+
+
+
 # Number of random samples to pick
-num_samples = 5
+num_samples = 10
 
 # Flatten testX and testy (segments x 1 x segment_length)
-testX_flat = testX.reshape(-1, testX.shape[-1])[:, np.newaxis, :]
-testy_flat = testy.reshape(-1, testy.shape[-1])
+testX_flat = testX_norm.reshape(-1, testX_norm.shape[-1])[:, np.newaxis, :]
+testy_flat = testy_norm.reshape(-1, testy_norm.shape[-1])
 
 # Randomly choose indices for sampling
 random_indices = random.sample(range(testX_flat.shape[0]), num_samples)
-
+print("random indices: ", random_indices)
 # Convert test samples to torch tensors on device
 test_samples = torch.from_numpy(testX_flat[random_indices].astype(np.float32)).to(device)
 
