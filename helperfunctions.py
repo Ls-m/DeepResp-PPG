@@ -2,6 +2,8 @@ import matplotlib.pyplot as plt
 from scipy.signal import butter, filtfilt
 import torch
 import numpy as np
+from scipy.stats import pearsonr
+
 
 def butter_bandpass(lowcut, highcut, fs, order=5):
     nyquist = 0.5 * fs
