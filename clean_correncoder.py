@@ -6,7 +6,7 @@ import numpy as np
 import random
 from sklearn.utils import shuffle
 from sklearn.model_selection import KFold
-
+from torch.utils.tensorboard import SummaryWriter
 
 from helperfunctions import remove_flat_subjects
 from model2 import Correncoder_model
@@ -88,17 +88,17 @@ ppg_csv_files = [f for f in os.listdir(DATA_PATH) if f.endswith('.csv') and not 
 ORIGINAL_FS = 256  # your original sampling rate
 TARGET_FS = 30  # your desired target rate
 LOWCUT = 0.1
-HIGHCUT = 1.1
+HIGHCUT = 1.3
 
-SEGMENT_LENGTH = 16 * 30
+SEGMENT_LENGTH = 8 * 30
 STEP_SIZE = 242
 
 NUM_EPOCHS = 50
-BATCH_SIZE = 512
-LEARNING_RATE = 1e-4
+BATCH_SIZE = 128
+LEARNING_RATE = 2.8e-5
 PATIENCE = 20
 LR_SCHEDULER_PATIENCE = 8  # Lower than early stopping patience
-
+LR_SCHEDULER_FACTOR = 0.55
 
 SEED = 55
 print("Seed")
@@ -197,7 +197,7 @@ print("Saved normalized test data.")
 
 logo = LeaveOneGroupOut()
 # criterion = torch.nn.MSELoss()
-criterion = MSECorrelationLoss(alpha=0.3)  # adjust alpha to your needs
+criterion = MSECorrelationLoss(alpha=0.9)  # adjust alpha to your needs
 fold_test_losses = []
 fold_maes = []
 fold_rmses = []
@@ -205,6 +205,7 @@ fold_corrs = []
 
 # --- train loop ---
 for fold, (train_idx, val_idx) in enumerate(logo.split(data_ppg[train_val_subjects], data_resp[train_val_subjects], groups=train_val_subjects)):
+    writer = SummaryWriter(log_dir=f"runs/fold_{fold + 1}")
     print(f"Fold {fold + 1}/{len(train_val_subjects)}")
 
     # --- split to train and validation sets ---
@@ -237,7 +238,7 @@ for fold, (train_idx, val_idx) in enumerate(logo.split(data_ppg[train_val_subjec
     model = Correncoder_model().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
     lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', patience=LR_SCHEDULER_PATIENCE, factor=0.5, verbose=True
+        optimizer, mode='min', patience=LR_SCHEDULER_PATIENCE, factor=LR_SCHEDULER_FACTOR, verbose=True
     )
 
     best_val_loss = float('inf')
@@ -307,7 +308,13 @@ for fold, (train_idx, val_idx) in enumerate(logo.split(data_ppg[train_val_subjec
 
         # Compute metrics
         mae, rmse, corr = evaluate_metrics(testyT, test_outputs.squeeze(1))
-
+        # Log metrics for this fold
+    writer.add_scalar("Fold/Test Loss", test_loss, 0)
+    writer.add_scalar("Fold/MSE", rmse, 0)
+    writer.add_scalar("Fold/MAE", mae, 0)
+    writer.add_scalar("Fold/Correlation", corr, 0)
+    writer.add_scalar("Fold/Num Epochs", epoch + 1, 0)  # number of epochs actually run
+    writer.close()
     print(f"Fold {fold + 1} Test Loss: {test_loss:.4f}")
     fold_test_losses.append(test_loss)
     fold_maes.append(mae)
