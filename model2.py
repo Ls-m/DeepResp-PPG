@@ -14,7 +14,7 @@ kernel_size3 = 30
 padding = 30
 dilation = 1
 stride = 1
-dropout_val = 0.3
+dropout_val = 0.1
 padding2 = 20
 padding3 = 10
 dilation2 = 1
@@ -26,25 +26,30 @@ class Correncoder_model(nn.Module):
         super().__init__()
         self.layer1 = nn.Sequential(
             nn.Conv1d(n_in, n_out, kernel_size=kernel_size, padding=padding),
+            nn.BatchNorm1d(n_out),
             nn.ReLU(),
             nn.Dropout(dropout_val)
         )
         self.layer2 = nn.Sequential(
             nn.Conv1d(n_out, n_out2, kernel_size=kernel_size2, padding=padding2),
+            nn.BatchNorm1d(n_out2),
             nn.ReLU(),
             nn.Dropout(dropout_val)
         )
         self.layer3 = nn.Sequential(
             nn.Conv1d(n_out2, n_out3, kernel_size=kernel_size3, padding=padding3),
+            nn.BatchNorm1d(n_out3),
             nn.Sigmoid(),
             nn.Dropout(dropout_val)
         )
         self.layer4 = nn.Sequential(
             nn.ConvTranspose1d(n_out3, n_out2, kernel_size=kernel_size3, padding=padding3),
+            nn.BatchNorm1d(n_out2),
             nn.Sigmoid()
         )
         self.layer5 = nn.Sequential(
             nn.ConvTranspose1d(n_out2, n_out, kernel_size=kernel_size2, padding=padding2),
+            nn.BatchNorm1d(n_out),
             nn.ReLU()
         )
         self.layer6 = nn.Sequential(
