@@ -10,7 +10,8 @@ def run_ensemble_test(testX, testy, fold_test_losses, model_folder='.', num_samp
 
     print(f"Total test samples: {testX_flat.shape[0]}")
 
-    random_indices = random.sample(range(testX_flat.shape[0]), num_samples)
+    # random_indices = random.sample(range(testX_flat.shape[0]), num_samples)
+    random_indices = [1480, 3215, 2457, 12113, 4959, 13782, 1305, 12241, 3010, 4946]
     print(f"Randomly selected test sample indices: {random_indices}")
 
     test_samples = torch.from_numpy(testX_flat[random_indices].astype(np.float32)).to(device)
@@ -64,7 +65,7 @@ if __name__ == "__main__":
 
     # Set these according to your setup
     model_folder = '.'  # folder with saved best_model_fold_*.pth files
-    num_folds = 22       # number of saved folds
-    num_samples = 10     # how many random samples to plot
+    num_folds = 19       # number of saved folds
+    num_samples = 20     # how many random samples to plot
 
     run_ensemble_test(testX, testy, fold_test_losses, model_folder, num_samples, device, num_folds)
