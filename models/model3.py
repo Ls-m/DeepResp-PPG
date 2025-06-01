@@ -2,112 +2,253 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# --- DILATED RESIDUAL INCEPTION BLOCK ---
-class DRInceptionBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, dilation_rates=[1, 2, 4, 8]):
-        super(DRInceptionBlock, self).__init__()
-        # Inception with different dilations
-        self.convs = nn.ModuleList([
-            nn.Conv1d(in_channels, out_channels, kernel_size=3, padding=rate, dilation=rate)
-            for rate in dilation_rates
-        ])
-        self.bn = nn.BatchNorm1d(out_channels * len(dilation_rates))
-        self.res_conv = nn.Conv1d(in_channels, out_channels * len(dilation_rates), kernel_size=1)
-        self.res_bn = nn.BatchNorm1d(out_channels * len(dilation_rates))
-        self.activation = nn.LeakyReLU(0.2, inplace=True)
 
-    def forward(self, x):
-        # Inception
-        outs = [conv(x) for conv in self.convs]
-        x_cat = torch.cat(outs, dim=1)
-        x_cat = self.bn(x_cat)
-        # Residual connection
-        res = self.res_conv(x)
-        res = self.res_bn(res)
-        out = self.activation(x_cat + res)
-        return out
+# Based on Section II.A, Equation 4 in respnet.pdf
+class SmoothL1Loss(nn.Module):
+    """
+    Implements the Smooth L1 Loss (Huber Loss) as described in the paper.
+    The paper's formula implies a beta (delta) value of 1.0.
+    """
 
-# --- ENCODER BLOCK ---
-class EncoderBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, stride=4):
-        super(EncoderBlock, self).__init__()
-        self.conv = nn.Conv1d(in_channels, out_channels, kernel_size=4, stride=stride, padding=0)
-        self.bn = nn.BatchNorm1d(out_channels)
-        self.act = nn.LeakyReLU(0.2, inplace=True)
-        self.drinception = DRInceptionBlock(out_channels, out_channels // 2)  # Split channels to keep total similar
+    def __init__(self):
+        super(SmoothL1Loss, self).__init__()
 
-    def forward(self, x):
-        x = self.conv(x)
-        x = self.bn(x)
-        x = self.act(x)
-        x = self.drinception(x)
-        return x
+    def forward(self, y_pred, y_true):
+        # Calculate the absolute difference between prediction and ground truth
+        diff = torch.abs(y_pred - y_true)
 
-# --- DECODER BLOCK ---
-class DecoderBlock(nn.Module):
+        # Apply the Smooth L1 Loss formula:
+        # 0.5 * diff^2 if diff < 1.0
+        # diff - 0.5 if diff >= 1.0
+        loss = torch.where(diff < 1.0, 0.5 * diff ** 2, diff - 0.5)
+
+        # Return the mean loss over the batch
+        return torch.mean(loss)
+
+
+# Based on Section II.B and Figure 2 in respnet.pdf
+class DilatedResidualInceptionBlock(nn.Module):
+    """
+    Implements the Dilated Residual Inception Block used in RespNet.
+    This block combines multiple dilated convolutions with different rates
+    and a residual connection.
+    """
+
     def __init__(self, in_channels, out_channels):
-        super(DecoderBlock, self).__init__()
-        self.deconv = nn.ConvTranspose1d(in_channels, out_channels, kernel_size=4, stride=4)
-        self.bn = nn.BatchNorm1d(out_channels)
-        self.act = nn.LeakyReLU(0.2, inplace=True)
-        self.drinception = DRInceptionBlock(out_channels, out_channels // 2)
+        super(DilatedResidualInceptionBlock, self).__init__()
 
-    def forward(self, x, skip):
-        x = self.deconv(x)
-        x = self.bn(x)
-        x = self.act(x)
-        # Crop or pad skip connection to match shape
-        if x.shape[-1] > skip.shape[-1]:
-            x = x[..., :skip.shape[-1]]
-        elif x.shape[-1] < skip.shape[-1]:
-            skip = skip[..., :x.shape[-1]]
-        x = torch.cat([x, skip], dim=1)
-        x = self.drinception(x)
-        return x
+        # Ensure input and output channels are the same for the residual connection
+        if in_channels != out_channels:
+            raise ValueError(
+                "For DilatedResidualInceptionBlock, in_channels must be equal to out_channels for residual connection.")
 
-# --- RESP NET MAIN ARCHITECTURE ---
+        # The block splits channels into 4 branches, so out_channels must be divisible by 4
+        if out_channels % 4 != 0:
+            raise ValueError(f"out_channels ({out_channels}) must be divisible by 4 for DilatedResidualInceptionBlock")
+
+        branch_channels = out_channels // 4  # Channels for each inception branch
+
+        # Define the four branches with 1x1 Conv -> BN -> LeakyReLU -> Dilated Conv -> BN -> LeakyReLU
+        # Dilated convolutions use kernel_size=4 and 'same' padding to maintain spatial dimensions.
+        self.branch1 = nn.Sequential(
+            nn.Conv1d(in_channels, branch_channels, kernel_size=1),
+            nn.BatchNorm1d(branch_channels),
+            nn.LeakyReLU(0.2),
+            nn.Conv1d(branch_channels, branch_channels, kernel_size=4, padding='same', dilation=1),  # Dilation rate: 1
+            nn.BatchNorm1d(branch_channels),
+            nn.LeakyReLU(0.2)
+        )
+        self.branch2 = nn.Sequential(
+            nn.Conv1d(in_channels, branch_channels, kernel_size=1),
+            nn.BatchNorm1d(branch_channels),
+            nn.LeakyReLU(0.2),
+            nn.Conv1d(branch_channels, branch_channels, kernel_size=4, padding='same', dilation=2),  # Dilation rate: 2
+            nn.BatchNorm1d(branch_channels),
+            nn.LeakyReLU(0.2)
+        )
+        self.branch3 = nn.Sequential(
+            nn.Conv1d(in_channels, branch_channels, kernel_size=1),
+            nn.BatchNorm1d(branch_channels),
+            nn.LeakyReLU(0.2),
+            nn.Conv1d(branch_channels, branch_channels, kernel_size=4, padding='same', dilation=4),  # Dilation rate: 4
+            nn.BatchNorm1d(branch_channels),
+            nn.LeakyReLU(0.2)
+        )
+        self.branch4 = nn.Sequential(
+            nn.Conv1d(in_channels, branch_channels, kernel_size=1),
+            nn.BatchNorm1d(branch_channels),
+            nn.LeakyReLU(0.2),
+            nn.Conv1d(branch_channels, branch_channels, kernel_size=4, padding='same', dilation=8),  # Dilation rate: 8
+            nn.BatchNorm1d(branch_channels),
+            nn.LeakyReLU(0.2)
+        )
+
+        # Final 1x1 convolution after concatenating branch outputs, before residual addition
+        self.final_conv1x1 = nn.Conv1d(out_channels, out_channels, kernel_size=1)
+        self.final_bn = nn.BatchNorm1d(out_channels)
+        self.final_relu = nn.LeakyReLU(0.2)
+
+    def forward(self, x):
+        identity = x  # Store input for the residual connection
+
+        # Process input through each dilated inception branch
+        out1 = self.branch1(x)
+        out2 = self.branch2(x)
+        out3 = self.branch3(x)
+        out4 = self.branch4(x)
+
+        # Concatenate the outputs from all branches along the channel dimension
+        concatenated_output = torch.cat([out1, out2, out3, out4], dim=1)
+
+        # Apply final 1x1 convolution, Batch Normalization, and LeakyReLU
+        processed_concatenated_output = self.final_relu(self.final_bn(self.final_conv1x1(concatenated_output)))
+
+        # Add the residual connection
+        output = identity + processed_concatenated_output
+        return output
+
+
+# Based on Section II.B and Figure 1 in respnet.pdf
 class RespNet(nn.Module):
+    """
+    RespNet is a fully convolutional encoder-decoder network for respiration signal extraction.
+    It utilizes Dilated Residual Inception Blocks and skip connections similar to U-Net.
+    """
+
     def __init__(self, input_channels=1, output_channels=1):
         super(RespNet, self).__init__()
-        # Encoder (8 levels)
-        filters = [16, 32, 64, 128, 256, 512, 512, 512]  # Per paper
-        self.encoders = nn.ModuleList()
-        in_ch = input_channels
-        for f in filters:
-            self.encoders.append(EncoderBlock(in_ch, f))
-            in_ch = f * 2  # Due to DRInception block output channel doubling
 
-        # Decoder
-        self.decoders = nn.ModuleList()
-        rev_filters = list(reversed(filters))
-        for i in range(len(rev_filters) - 1):
-            # in_channels = previous + skip connection
-            self.decoders.append(
-                DecoderBlock(rev_filters[i]*2 + rev_filters[i+1]*2, rev_filters[i+1])
+        # Define the number of filters for each encoder level.
+        # Channels double until 512, then remain 512 for subsequent levels.
+        # This creates 8 encoder levels (0-7), with 9 channel values including the input.
+        encoder_filters = [input_channels, 32, 64, 128, 256, 512, 512, 512, 512]
+
+        self.encoder_blocks = nn.ModuleList()
+        self.inception_blocks_encoder = nn.ModuleList()
+
+        # Build the Encoder path (8 levels)
+        for i in range(8):
+            in_f = encoder_filters[i]
+            out_f = encoder_filters[i + 1]
+
+            # Downsampling strategy:
+            # First 5 levels (i=0 to 4) use stride 4 for aggressive downsampling.
+            # Last 3 levels (i=5 to 7) use stride 1 with 'same' padding to maintain length.
+            stride = 4 if i < 5 else 1
+            padding = 'same' if stride == 1 else 0  # 'same' padding for stride 1 to maintain length
+
+            encoder_layer = nn.Sequential(
+                nn.Conv1d(in_f, out_f, kernel_size=4, stride=stride, padding=padding),
+                nn.BatchNorm1d(out_f),
+                nn.LeakyReLU(0.2)
             )
-        # Final 1x1 conv
-        self.final_conv = nn.Conv1d(rev_filters[-1]*2, output_channels, kernel_size=1)
+            self.encoder_blocks.append(encoder_layer)
+
+            # Append a Dilated Residual Inception Block after each encoder convolution
+            self.inception_blocks_encoder.append(DilatedResidualInceptionBlock(out_f, out_f))
+
+        # Decoder path (8 levels)
+        self.decoder_layers = nn.ModuleList()
+
+        # Build the Decoder path
+        # The deconvolution operations mirror the encoder's downsampling.
+        # First 3 decoder levels (i=0 to 2, corresponding to encoder levels 7, 6, 5) use stride 1.
+        # Last 5 decoder levels (i=3 to 7, corresponding to encoder levels 4, 3, 2, 1, 0) use stride 4.
+        for i in range(8):
+            # Determine input and output channels for the deconvolution layer
+            deconv_in_channels = encoder_filters[8 - i]  # Channels from the previous decoder stage or bottleneck
+            # Channels after deconvolution, before concatenation. For the last level, it goes to input_channels.
+            deconv_out_channels = encoder_filters[7 - i] if i < 7 else input_channels
+
+            # Upsampling stride: 1 for first 3 decoder levels, 4 for the rest
+            stride = 1 if i < 3 else 4
+            # Padding for ConvTranspose1d.
+            # For stride=1, kernel=4, padding=1 gives L_out = L_in + 1.
+            # For stride=4, kernel=4, padding=0 gives L_out = (L_in-1)*4 + 4.
+            padding = 1 if stride == 1 else 0
+
+            self.decoder_layers.append(
+                nn.ConvTranspose1d(deconv_in_channels, deconv_out_channels, kernel_size=4, stride=stride,
+                                   padding=padding))
+
+            # Concatenation with skip connection and subsequent processing
+            # Skip connection channel for decoder level `i` is from encoder level `7-i`.
+            # For the very last decoder level (i=7), the skip connection is the original input `x`.
+            skip_channels_for_concat = encoder_filters[7 - i] if i < 7 else input_channels
+            concat_channels = deconv_out_channels + skip_channels_for_concat
+
+            # Conditional application of DilatedResidualInceptionBlock:
+            # It's applied for the first 7 decoder levels.
+            # The very last decoder level (i=7) only has a Conv-BN-ReLU layer after concatenation,
+            # as per the paper's description for the final stage.
+            if i < 7:  # For the first 7 decoder levels
+                self.decoder_layers.append(nn.Sequential(
+                    nn.Conv1d(concat_channels, deconv_out_channels, kernel_size=1),
+                    # Adjust channels after concatenation
+                    nn.BatchNorm1d(deconv_out_channels),
+                    nn.LeakyReLU(0.2)
+                ))
+                self.decoder_layers.append(DilatedResidualInceptionBlock(deconv_out_channels, deconv_out_channels))
+            else:  # For the very last decoder level (i=7)
+                # Only a Conv-BN-ReLU to combine concatenated features before the final output convolution
+                self.decoder_layers.append(nn.Sequential(
+                    nn.Conv1d(concat_channels, deconv_out_channels, kernel_size=1),  # Maps e.g., 2 channels to 1
+                    nn.BatchNorm1d(deconv_out_channels),
+                    nn.LeakyReLU(0.2)
+                ))
+
+        # Final 1x1 convolution layer to map the features from the last decoder level
+        # to the desired number of output channels (e.g., 1 for respiration signal).
+        self.final_output_conv = nn.Conv1d(input_channels, output_channels, kernel_size=1)
 
     def forward(self, x):
-        skips = []
-        for enc in self.encoders:
-            x = enc(x)
-            skips.append(x)
-        skips = skips[:-1][::-1]
-        x = skips.pop(0)  # The last encoder output is the bottleneck
-        for dec, skip in zip(self.decoders, skips):
-            x = dec(x, skip)
-        x = self.final_conv(x)
-        return x
+        # Add a channel dimension if the input is 2D (batch, length)
+        if x.dim() == 2:
+            x = x.unsqueeze(1)  # Becomes (batch, 1, length)
 
-# --- LOSS FUNCTION ---
-class SmoothL1Loss(nn.Module):
-    def __init__(self):
-        super().__init__()
-    def forward(self, pred, target):
-        return F.smooth_l1_loss(pred, target)
+        skip_connections = []  # List to store outputs of encoder inception blocks for skip connections
+        x_enc = x  # Initialize encoder input with the original input `x`
 
-# Example usage:
-# model = RespNet(input_channels=1, output_channels=1)
-# y_pred = model(torch.randn(16, 1, 2048))  # batch_size=16, 2048 is the input window per paper
-# loss = SmoothL1Loss()(y_pred, y_true)
+        # Encoder path: Process input through each encoder block
+        for i in range(len(self.encoder_blocks)):
+            x_enc = self.encoder_blocks[i](x_enc)  # Apply convolution, BN, LeakyReLU
+            x_enc = self.inception_blocks_encoder[i](x_enc)  # Apply Dilated Residual Inception Block
+            skip_connections.append(x_enc)  # Store the output for skip connection
+
+        # Decoder path: Start with the output of the last encoder block (bottleneck)
+        x_dec = skip_connections[-1]
+
+        # Iterate through decoder levels
+        for i in range(8):
+            # Deconvolution layer (first part of the decoder block)
+            x_dec = self.decoder_layers[i * 3](x_dec)
+
+            # Get the corresponding skip connection from the encoder
+            # For the last decoder level (i=7), the skip connection is the original input `x`.
+            current_skip = skip_connections[6 - i] if i < 7 else x
+
+            # Handle spatial dimension mismatch before concatenation
+            # If x_dec's length is greater than current_skip's length, crop x_dec.
+            # This is necessary because ConvTranspose1d with stride=1, kernel_size=4, padding=1
+            # results in an output length of L_in + 1, causing mismatches with the skip connection.
+            if x_dec.shape[2] > current_skip.shape[2]:
+                diff = x_dec.shape[2] - current_skip.shape[2]
+                x_dec = x_dec[:, :, :-diff]  # Crop from the right (end)
+
+            # If x_dec is shorter than current_skip, it would require padding,
+            # but based on current layer configurations, x_dec should generally be
+            # equal to or longer than current_skip after deconvolution.
+
+            # Concatenate with the corresponding skip connection from the encoder
+            x_dec = torch.cat([x_dec, current_skip], dim=1)
+
+            # Apply Conv-BN-ReLU after concatenation (second part of the decoder block)
+            x_dec = self.decoder_layers[i * 3 + 1](x_dec)
+
+            # Apply Dilated Residual Inception Block for the first 7 decoder levels
+            if i < 7:
+                x_dec = self.decoder_layers[i * 3 + 2](x_dec)  # Inception block
+
+        # Apply the final 1x1 convolution to get the desired output
+        output = self.final_output_conv(x_dec)
+        return output
