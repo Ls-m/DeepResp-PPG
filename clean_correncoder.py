@@ -1,15 +1,18 @@
 from tqdm import tqdm
 import pandas as pd
 import os
+from torchinfo import summary
 import torch
 import numpy as np
 import random
 from sklearn.utils import shuffle
 from sklearn.model_selection import KFold
 from torch.utils.tensorboard import SummaryWriter
-
+import time
 from helperfunctions import remove_flat_subjects
 from model2 import Correncoder_model
+from models.model3 import RespNet, SmoothL1Loss
+from models.model4 import *
 import torch.nn as nn
 from scipy.signal import resample
 import matplotlib.pyplot as plt
@@ -90,12 +93,15 @@ TARGET_FS = 30  # your desired target rate
 LOWCUT = 0.1
 HIGHCUT = 1.3
 
-SEGMENT_LENGTH = 8 * 30
+SEGMENT_LENGTH = 8*30
 STEP_SIZE = 242
 
-NUM_EPOCHS = 50
+# criterion = torch.nn.MSELoss()
+criterion = MSECorrelationLoss(alpha=0.9)  # adjust alpha to your needs
+# criterion = SmoothL1Loss()
+NUM_EPOCHS = 20
 BATCH_SIZE = 128
-LEARNING_RATE = 2.8e-5
+LEARNING_RATE = 1e-4
 PATIENCE = 20
 LR_SCHEDULER_PATIENCE = 8  # Lower than early stopping patience
 LR_SCHEDULER_FACTOR = 0.55
@@ -196,16 +202,18 @@ print("Saved normalized test data.")
 
 
 logo = LeaveOneGroupOut()
-# criterion = torch.nn.MSELoss()
-criterion = MSECorrelationLoss(alpha=0.9)  # adjust alpha to your needs
+
+
 fold_test_losses = []
 fold_maes = []
 fold_rmses = []
 fold_corrs = []
 
+
+experiment_name = f"experiment_{time.strftime('%Y%m%d_%H%M%S')}"
 # --- train loop ---
 for fold, (train_idx, val_idx) in enumerate(logo.split(data_ppg[train_val_subjects], data_resp[train_val_subjects], groups=train_val_subjects)):
-    writer = SummaryWriter(log_dir=f"runs/fold_{fold + 1}")
+    writer = SummaryWriter(log_dir=f"runs/{experiment_name}/fold_{fold + 1}")
     print(f"Fold {fold + 1}/{len(train_val_subjects)}")
 
     # --- split to train and validation sets ---
@@ -235,7 +243,16 @@ for fold, (train_idx, val_idx) in enumerate(logo.split(data_ppg[train_val_subjec
 
     total_step = trainXT.shape[0]
 
-    model = Correncoder_model().to(device)
+    # model = Correncoder_model().to(device)
+    model = Transformer1DRegressor(
+        input_dim=1,
+        d_model=64,
+        nhead=4,
+        num_layers=4,
+        segment_length=SEGMENT_LENGTH
+    ).to(device)
+    # model = RespNet(input_channels=1, output_channels=1).to(device)
+    # summary(model, input_size=(1, 1, SEGMENT_LENGTH))
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
     lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='min', patience=LR_SCHEDULER_PATIENCE, factor=LR_SCHEDULER_FACTOR, verbose=True
@@ -348,7 +365,8 @@ test_samples = torch.from_numpy(testX_flat[random_indices].astype(np.float32)).t
 all_predictions = []
 num_folds = 19
 for fold in range(1, num_folds + 1):  # assuming folds == train_val_subjects count
-    model = Correncoder_model().to(device)
+    # model = Correncoder_model().to(device)
+    model = RespNet(input_channels=1, output_channels=1).to(device)
     model.load_state_dict(torch.load(f"best_model_fold_{fold}.pth"))
     model.eval()
     with torch.no_grad():
