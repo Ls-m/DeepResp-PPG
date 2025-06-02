@@ -7,9 +7,9 @@ import numpy as np
 import random
 from sklearn.model_selection import GroupShuffleSplit, LeaveOneGroupOut
 from scipy.signal import resample
-from helperfunctions import remove_flat_subjects, apply_bandpass_filter, segment_signal, normalize_data
+from helperfunctions import apply_bandpass_filter, segment_signal, normalize_data
 
-from model2 import Correncoder_model  # <-- model must accept kernel_size as argument
+from models.model2 import Correncoder_model  # <-- model must accept kernel_size as argument
 import torch.nn as nn
 
 class MSECorrelationLoss(nn.Module):
