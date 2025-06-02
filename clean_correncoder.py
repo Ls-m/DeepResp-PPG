@@ -10,6 +10,9 @@ import torch.nn as nn
 from sklearn.model_selection import GroupShuffleSplit
 from sklearn.model_selection import LeaveOneGroupOut
 from helperfunctions import *
+import scipy
+import pandas as pd
+from scipy.signal import resample
 
 
 
@@ -59,6 +62,8 @@ INPUT_NAME = 'PPG'
 TARGET_NAME = 'NASAL CANULA'
 ppg_csv_files = [f for f in os.listdir(DATA_PATH) if f.endswith('.csv') and not f.startswith('.DS_Store')]
 
+BIDMC_PATH = '/Users/eli/Downloads/bidmc_data.mat'
+
 ORIGINAL_FS = 256  # your original sampling rate
 TARGET_FS = 30  # your desired target rate
 LOWCUT = 0.1
@@ -94,58 +99,20 @@ print(f"Using device: {device}")
 
 
 # --- pre-process data ---
-# ppg_list = []
-# resp_list = []
-# num_of_subjects = 0
-# print("data processing...")
-# for ppg_file in tqdm(ppg_csv_files, leave=True):
-#     data = pd.read_csv(os.path.join(DATA_PATH, ppg_file), sep='\t', index_col='Time', skiprows=[1])
-#     if INPUT_NAME in data.columns and TARGET_NAME in data.columns:
-#
-#         num_of_subjects += 1
-#
-#         # --- extract both signals ---
-#         ppg_signal = data[INPUT_NAME].to_numpy()  # extract the PPG signal
-#         resp_signal = data[TARGET_NAME].to_numpy()  # extract the target signal (NASAL CANULA, AIRFLOW, etc.)
-#
-#         # --- Resample both signals ---
-#         duration_seconds = ppg_signal.shape[0] / ORIGINAL_FS
-#         new_length = int(duration_seconds * TARGET_FS)
-#
-#         ppg_resampled = resample(ppg_signal, new_length)
-#         resp_resampled = resample(resp_signal, new_length)
-#
-#         # --- filter both signals ---
-#         ppg_filtered = apply_bandpass_filter(ppg_resampled, LOWCUT, HIGHCUT, TARGET_FS)
-#         resp_filtered = apply_bandpass_filter(resp_resampled, LOWCUT, HIGHCUT, TARGET_FS)
-#
-#         # --- plot the steps ---
-#         # PLOT for the first few subjects only
-#         if num_of_subjects <= 2:
-#             plot_preprocessing(ppg_signal, ppg_resampled, ppg_filtered, fs_orig=256, fs_target=30, file_name=ppg_file,
-#                                label='PPG', seconds=20)
-#             plot_fft(ppg_resampled, TARGET_FS, label="PPG (Original)", filename=ppg_file, xlim=1.5)
-#             plot_fft(ppg_filtered, TARGET_FS, label="PPG (Filtered)", filename=ppg_file, xlim=1.5)
-#         # --- segment both signals ---
-#         ppg_segments = segment_signal(ppg_filtered, segment_length=SEGMENT_LENGTH,step_size=STEP_SIZE)
-#         resp_segments = segment_signal(resp_filtered, segment_length=SEGMENT_LENGTH,step_size=STEP_SIZE)
-#
-#         # --- append the signals to the list ---
-#         ppg_list.append(ppg_segments)
-#         resp_list.append(resp_segments)
-#
-#
-# # --- crop all signals to the same length ---
-# min_len = min([sig.shape[0] for sig in ppg_list])
-# ppg_list = [sig[:min_len] for sig in ppg_list]
-# resp_list = [sig[:min_len] for sig in resp_list]
-#
-# # --- stack them together ---
-# data_ppg = np.stack(ppg_list, axis=0)  # shape: (num_subjects, signal_length)
-# data_resp = np.stack(resp_list, axis=0)  # shape: (num_subjects, signal_length)
-# print(f"data_ppg shape: {data_ppg.shape}")
-# print(f"data_resp shape: {data_resp.shape}")
-#
+# data_ppg, data_resp = preprocess_dataset(kind=0,
+#                       ppg_csv_files=ppg_csv_files,
+#                       DATA_PATH=DATA_PATH,
+#                       INPUT_NAME=INPUT_NAME,
+#                       TARGET_NAME=TARGET_NAME,
+#                       ORIGINAL_FS=ORIGINAL_FS,
+#                       TARGET_FS=TARGET_FS,
+#                       LOWCUT=LOWCUT,
+#                       HIGHCUT=HIGHCUT,
+#                       SEGMENT_LENGTH=SEGMENT_LENGTH,
+#                       STEP_SIZE=STEP_SIZE,
+#                       bidmc_mat_path=BIDMC_PATH)
+
+
 # # --- save pre-processed data ---
 # np.save('data_ppg.npy', data_ppg)
 # np.save('data_resp.npy', data_resp)
@@ -351,8 +318,8 @@ test_samples = torch.from_numpy(testX_flat[random_indices].astype(np.float32)).t
 all_predictions = []
 num_folds = 19
 for fold in range(1, num_folds + 1):  # assuming folds == train_val_subjects count
-    # model = Correncoder_model().to(device)
-    model = RespNet(input_channels=1, output_channels=1).to(device)
+    model = Correncoder_model().to(device)
+    # model = RespNet(input_channels=1, output_channels=1).to(device)
     model.load_state_dict(torch.load(f"best_model_fold_{fold}.pth"))
     model.eval()
     with torch.no_grad():
