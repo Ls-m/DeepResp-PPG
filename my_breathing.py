@@ -230,13 +230,13 @@ for subject_id in range(num_of_subjects):
     train_dataset = Diff_dataset(train_ppg, train_resp)
     val_dataset = Diff_dataset(test_ppg, test_resp)
 
-    train_loader = DataLoader(train_dataset, batch_size=2048,shuffle = True)
-    val_loader = DataLoader(val_dataset, batch_size=256,shuffle = False)
+    train_loader = DataLoader(train_dataset, batch_size=64,shuffle = True)
+    val_loader = DataLoader(val_dataset, batch_size=16,shuffle = False)
 
 
 
 
-    model = diffusion_pipeline(384, 1024, 6, 128, device).to(device)
+    model = diffusion_pipeline(384, 512, 4, 128, device).to(device)
     #model = torch.nn.DataParallel(model).to(device)
 
     
