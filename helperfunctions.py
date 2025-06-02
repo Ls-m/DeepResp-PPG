@@ -67,6 +67,26 @@ def apply_bandpass_filter(data, lowcut, highcut, fs, order=5):
     filtered = filtfilt(b, a, data, axis=-1)
     return filtered
 
+# a function that gives a rough indication of breaths per minute error by examining the crossings of 0.5
+# this assumes that the respiratory reference is normalised between 0 and 1.
+def breaths_per_min_zc(output_array_zc, input_array_zc):
+    peak_count_output = []
+    peak_count_cap = []
+    for ind_output in range(output_array_zc.shape[0]):
+        output_array_zc_temp = output_array_zc[ind_output, 0, :]
+        input_array_zc_temp = input_array_zc[ind_output, :]
+        output_array_zc_temp = output_array_zc_temp - 0.5
+        input_array_zc_temp = input_array_zc_temp - 0.5
+        zero_crossings_output = ((output_array_zc_temp[:-1] * output_array_zc_temp[1:]) < 0).sum()
+        zero_crossings_input = ((input_array_zc_temp[:-1] * input_array_zc_temp[1:]) < 0).sum()
+        peak_count_output.append(zero_crossings_output)
+        peak_count_cap.append(zero_crossings_input)
+    peak_count_output = np.array(peak_count_output)
+    peak_count_cap = np.array(peak_count_cap)
+    # 6.5 is used ot scale up to 1 minute, as each segment here is 60/6.5 seconds long.
+    mean_error = ((np.mean(peak_count_output - peak_count_cap)) / 2) * 6.5
+    mean_abs_error = ((np.mean(np.abs(peak_count_output - peak_count_cap))) / 2) * 6.5
+    return mean_abs_error, mean_error
 
 def evaluate_metrics(y_true, y_pred):
     # Convert tensors to numpy if needed
@@ -183,3 +203,107 @@ def check_null_or_empty(arr, arr_name="Array"):
             print(f"All-zero segments found: {zero_count} (shape: {arr.shape})")
     else:
         print(f"No NaN, infinite, or all-zero records in {arr_name}.")
+
+
+
+def process_signals(ppg_signal, resp_signal,
+                   ORIGINAL_FS, TARGET_FS,
+                   LOWCUT, HIGHCUT,
+                   SEGMENT_LENGTH, STEP_SIZE
+                   ):
+
+    # --- Resample both signals ---
+    duration_seconds = ppg_signal.shape[0] / ORIGINAL_FS
+    new_length = int(duration_seconds * TARGET_FS)
+    ppg_resampled = resample(ppg_signal, new_length)
+    resp_resampled = resample(resp_signal, new_length)
+
+
+    # --- Skip if too short for filtering ---
+    if len(ppg_resampled) <= 33 or len(resp_resampled) <= 33:
+        raise ValueError("Signal too short for filtering")
+    # --- Filter both signals ---
+    ppg_filtered = apply_bandpass_filter(ppg_resampled, LOWCUT, HIGHCUT, TARGET_FS)
+    resp_filtered = apply_bandpass_filter(resp_resampled, LOWCUT, HIGHCUT, TARGET_FS)
+
+    # --- Segment both signals ---
+    ppg_segments = segment_signal(ppg_filtered, segment_length=SEGMENT_LENGTH, step_size=STEP_SIZE)
+    resp_segments = segment_signal(resp_filtered, segment_length=SEGMENT_LENGTH, step_size=STEP_SIZE)
+
+    return ppg_resampled,ppg_filtered,ppg_segments, resp_segments
+
+def preprocess_dataset(kind=0,
+                      ppg_csv_files=None,
+                      DATA_PATH=None,
+                      INPUT_NAME=None,
+                      TARGET_NAME=None,
+                      ORIGINAL_FS=None,
+                      TARGET_FS=None,
+                      LOWCUT=None,
+                      HIGHCUT=None,
+                      SEGMENT_LENGTH=None,
+                      STEP_SIZE=None,
+                      bidmc_mat_path=None):
+    ppg_list = []
+    resp_list = []
+    num_of_subjects = 0
+
+    if kind == 0:
+        print("Processing your own dataset...")
+        for ppg_file in tqdm(ppg_csv_files, leave=True):
+            data = pd.read_csv(os.path.join(DATA_PATH, ppg_file), sep='\t', index_col='Time', skiprows=[1])
+            if INPUT_NAME in data.columns and TARGET_NAME in data.columns:
+                num_of_subjects += 1
+                ppg_signal = data[INPUT_NAME].to_numpy()
+                resp_signal = data[TARGET_NAME].to_numpy()
+                ppg_resampled,ppg_filtered,ppg_segments, resp_segments = process_signals(
+                    ppg_signal, resp_signal,
+                    ORIGINAL_FS, TARGET_FS,
+                    LOWCUT, HIGHCUT,
+                    SEGMENT_LENGTH, STEP_SIZE
+
+                )
+
+                if num_of_subjects <= 2 and plot_preprocessing is not None and plot_fft is not None:
+                    plot_preprocessing(ppg_signal, ppg_resampled, ppg_filtered, fs_orig=ORIGINAL_FS,
+                                       fs_target=TARGET_FS, file_name=ppg_file, label='PPG', seconds=20)
+                    plot_fft(ppg_resampled, TARGET_FS, label="PPG (Original)", filename=ppg_file, xlim=1.5)
+                    plot_fft(ppg_filtered, TARGET_FS, label="PPG (Filtered)", filename=ppg_file, xlim=1.5)
+
+                ppg_list.append(ppg_segments)
+                resp_list.append(resp_segments)
+
+    elif kind == 1:
+        print("Processing BIDMC dataset...")
+        data = scipy.io.loadmat(bidmc_mat_path)
+        subjects = data['data'][0]
+        for i in tqdm(range(len(subjects)), leave=True):
+            try:
+                ppg_signal = subjects[i]['ppg'][0][0][0].flatten()
+                resp_signal = subjects[i]['ref']['resp_sig'][0][0][0][0][0][0][0][0].flatten()
+                ppg_resampled,ppg_filtered,ppg_segments, resp_segments = process_signals(
+                    ppg_signal, resp_signal,
+                    125, TARGET_FS,
+                    LOWCUT, HIGHCUT,
+                    SEGMENT_LENGTH, STEP_SIZE
+                )
+                if ppg_segments is None or resp_segments is None:
+                    print("it's none")
+                ppg_list.append(ppg_segments)
+                resp_list.append(resp_segments)
+                num_of_subjects += 1
+            except Exception as e:
+                print(f"Error processing subject {i}: {e}")
+
+    else:
+        raise ValueError("Unknown dataset kind!")
+
+    # Crop and stack as before
+    min_len = min([sig.shape[0] for sig in ppg_list])
+    ppg_list = [sig[:min_len] for sig in ppg_list]
+    resp_list = [sig[:min_len] for sig in resp_list]
+    data_ppg = np.stack(ppg_list, axis=0)
+    data_resp = np.stack(resp_list, axis=0)
+
+    print(f"Processed {num_of_subjects} subjects. data_ppg shape: {data_ppg.shape}, data_resp shape: {data_resp.shape}")
+    return data_ppg, data_resp
