@@ -6,7 +6,7 @@ import numpy as np
 import random
 from sklearn.utils import shuffle
 from sklearn.model_selection import KFold
-from model2 import Correncoder_model
+from models.model2 import Correncoder_model
 import torch.nn as nn
 from scipy.signal import resample
 import matplotlib.pyplot as plt
