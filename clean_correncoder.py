@@ -1,25 +1,14 @@
 from tqdm import tqdm
-import pandas as pd
 import os
-from torchinfo import summary
-import torch
-import numpy as np
 import random
-from sklearn.utils import shuffle
-from sklearn.model_selection import KFold
 from torch.utils.tensorboard import SummaryWriter
 import time
-from helperfunctions import remove_flat_subjects
-from model2 import Correncoder_model
-from models.model3 import RespNet, SmoothL1Loss
+from models.model2 import *
+from models.model3 import RespNet
 from models.model4 import *
 import torch.nn as nn
-from scipy.signal import resample
-import matplotlib.pyplot as plt
-from scipy.signal import butter, filtfilt
-from sklearn.model_selection import GroupShuffleSplit, GroupKFold
+from sklearn.model_selection import GroupShuffleSplit
 from sklearn.model_selection import LeaveOneGroupOut
-from scipy.stats import pearsonr
 from helperfunctions import *
 
 
@@ -60,26 +49,8 @@ class MSECorrelationLoss(nn.Module):
 
 
 
-# a function that gives a rough indication of breaths per minute error by examining the crossings of 0.5
-# this assumes that the respiratory reference is normalised between 0 and 1.
-def breaths_per_min_zc(output_array_zc, input_array_zc):
-    peak_count_output = []
-    peak_count_cap = []
-    for ind_output in range(output_array_zc.shape[0]):
-        output_array_zc_temp = output_array_zc[ind_output, 0, :]
-        input_array_zc_temp = input_array_zc[ind_output, :]
-        output_array_zc_temp = output_array_zc_temp - 0.5
-        input_array_zc_temp = input_array_zc_temp - 0.5
-        zero_crossings_output = ((output_array_zc_temp[:-1] * output_array_zc_temp[1:]) < 0).sum()
-        zero_crossings_input = ((input_array_zc_temp[:-1] * input_array_zc_temp[1:]) < 0).sum()
-        peak_count_output.append(zero_crossings_output)
-        peak_count_cap.append(zero_crossings_input)
-    peak_count_output = np.array(peak_count_output)
-    peak_count_cap = np.array(peak_count_cap)
-    # 6.5 is used ot scale up to 1 minute, as each segment here is 60/6.5 seconds long.
-    mean_error = ((np.mean(peak_count_output - peak_count_cap)) / 2) * 6.5
-    mean_abs_error = ((np.mean(np.abs(peak_count_output - peak_count_cap))) / 2) * 6.5
-    return mean_abs_error, mean_error
+
+
 
 
 # --- Configurations ---
@@ -118,58 +89,72 @@ np.random.seed(SEED)
 device = torch.device("mps")
 print(f"Using device: {device}")
 
-ppg_list = []
-resp_list = []
-num_of_subjects = 0
-print("data processing...")
-for ppg_file in tqdm(ppg_csv_files, leave=True):
-    data = pd.read_csv(os.path.join(DATA_PATH, ppg_file), sep='\t', index_col='Time', skiprows=[1])
-    if INPUT_NAME in data.columns and TARGET_NAME in data.columns:
-
-        num_of_subjects += 1
-
-        # --- extract both signals ---
-        ppg_signal = data[INPUT_NAME].to_numpy()  # extract the PPG signal
-        resp_signal = data[TARGET_NAME].to_numpy()  # extract the target signal (NASAL CANULA, AIRFLOW, etc.)
-
-        # --- Resample both signals ---
-        duration_seconds = ppg_signal.shape[0] / ORIGINAL_FS
-        new_length = int(duration_seconds * TARGET_FS)
-
-        ppg_resampled = resample(ppg_signal, new_length)
-        resp_resampled = resample(resp_signal, new_length)
-
-        # --- filter both signals ---
-        ppg_filtered = apply_bandpass_filter(ppg_resampled, LOWCUT, HIGHCUT, TARGET_FS)
-        resp_filtered = apply_bandpass_filter(resp_resampled, LOWCUT, HIGHCUT, TARGET_FS)
-
-        # --- plot the steps ---
-        # PLOT for the first few subjects only
-        if num_of_subjects <= 2:
-            plot_preprocessing(ppg_signal, ppg_resampled, ppg_filtered, fs_orig=256, fs_target=30, file_name=ppg_file,
-                               label='PPG', seconds=20)
-            plot_fft(ppg_resampled, TARGET_FS, label="PPG (Original)", filename=ppg_file, xlim=1.5)
-            plot_fft(ppg_filtered, TARGET_FS, label="PPG (Filtered)", filename=ppg_file, xlim=1.5)
-        # --- segment both signals ---
-        ppg_segments = segment_signal(ppg_filtered, segment_length=SEGMENT_LENGTH,step_size=STEP_SIZE)
-        resp_segments = segment_signal(resp_filtered, segment_length=SEGMENT_LENGTH,step_size=STEP_SIZE)
-
-        # --- append the signals to the list ---
-        ppg_list.append(ppg_segments)
-        resp_list.append(resp_segments)
 
 
-# --- crop all signals to the same length ---
-min_len = min([sig.shape[0] for sig in ppg_list])
-ppg_list = [sig[:min_len] for sig in ppg_list]
-resp_list = [sig[:min_len] for sig in resp_list]
 
-# --- stack them together ---
-data_ppg = np.stack(ppg_list, axis=0)  # shape: (num_subjects, signal_length)
-data_resp = np.stack(resp_list, axis=0)  # shape: (num_subjects, signal_length)
-print(f"data_ppg shape: {data_ppg.shape}")
-print(f"data_resp shape: {data_resp.shape}")
 
+# --- pre-process data ---
+# ppg_list = []
+# resp_list = []
+# num_of_subjects = 0
+# print("data processing...")
+# for ppg_file in tqdm(ppg_csv_files, leave=True):
+#     data = pd.read_csv(os.path.join(DATA_PATH, ppg_file), sep='\t', index_col='Time', skiprows=[1])
+#     if INPUT_NAME in data.columns and TARGET_NAME in data.columns:
+#
+#         num_of_subjects += 1
+#
+#         # --- extract both signals ---
+#         ppg_signal = data[INPUT_NAME].to_numpy()  # extract the PPG signal
+#         resp_signal = data[TARGET_NAME].to_numpy()  # extract the target signal (NASAL CANULA, AIRFLOW, etc.)
+#
+#         # --- Resample both signals ---
+#         duration_seconds = ppg_signal.shape[0] / ORIGINAL_FS
+#         new_length = int(duration_seconds * TARGET_FS)
+#
+#         ppg_resampled = resample(ppg_signal, new_length)
+#         resp_resampled = resample(resp_signal, new_length)
+#
+#         # --- filter both signals ---
+#         ppg_filtered = apply_bandpass_filter(ppg_resampled, LOWCUT, HIGHCUT, TARGET_FS)
+#         resp_filtered = apply_bandpass_filter(resp_resampled, LOWCUT, HIGHCUT, TARGET_FS)
+#
+#         # --- plot the steps ---
+#         # PLOT for the first few subjects only
+#         if num_of_subjects <= 2:
+#             plot_preprocessing(ppg_signal, ppg_resampled, ppg_filtered, fs_orig=256, fs_target=30, file_name=ppg_file,
+#                                label='PPG', seconds=20)
+#             plot_fft(ppg_resampled, TARGET_FS, label="PPG (Original)", filename=ppg_file, xlim=1.5)
+#             plot_fft(ppg_filtered, TARGET_FS, label="PPG (Filtered)", filename=ppg_file, xlim=1.5)
+#         # --- segment both signals ---
+#         ppg_segments = segment_signal(ppg_filtered, segment_length=SEGMENT_LENGTH,step_size=STEP_SIZE)
+#         resp_segments = segment_signal(resp_filtered, segment_length=SEGMENT_LENGTH,step_size=STEP_SIZE)
+#
+#         # --- append the signals to the list ---
+#         ppg_list.append(ppg_segments)
+#         resp_list.append(resp_segments)
+#
+#
+# # --- crop all signals to the same length ---
+# min_len = min([sig.shape[0] for sig in ppg_list])
+# ppg_list = [sig[:min_len] for sig in ppg_list]
+# resp_list = [sig[:min_len] for sig in resp_list]
+#
+# # --- stack them together ---
+# data_ppg = np.stack(ppg_list, axis=0)  # shape: (num_subjects, signal_length)
+# data_resp = np.stack(resp_list, axis=0)  # shape: (num_subjects, signal_length)
+# print(f"data_ppg shape: {data_ppg.shape}")
+# print(f"data_resp shape: {data_resp.shape}")
+#
+# # --- save pre-processed data ---
+# np.save('data_ppg.npy', data_ppg)
+# np.save('data_resp.npy', data_resp)
+
+
+# --- load pre-processed data ---
+data_ppg = np.load('data_ppg.npy')
+data_resp = np.load('data_resp.npy')
+num_of_subjects = data_ppg.shape[0]
 
 # --- remove flat subjects ---
 subject_ids = np.arange(num_of_subjects)
@@ -243,14 +228,14 @@ for fold, (train_idx, val_idx) in enumerate(logo.split(data_ppg[train_val_subjec
 
     total_step = trainXT.shape[0]
 
-    # model = Correncoder_model().to(device)
-    model = Transformer1DRegressor(
-        input_dim=1,
-        d_model=64,
-        nhead=4,
-        num_layers=4,
-        segment_length=SEGMENT_LENGTH
-    ).to(device)
+    model = Correncoder_model().to(device)
+    # model = Transformer1DRegressor(
+    #     input_dim=1,
+    #     d_model=64,
+    #     nhead=4,
+    #     num_layers=4,
+    #     segment_length=SEGMENT_LENGTH
+    # ).to(device)
     # model = RespNet(input_channels=1, output_channels=1).to(device)
     # summary(model, input_size=(1, 1, SEGMENT_LENGTH))
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
@@ -325,6 +310,7 @@ for fold, (train_idx, val_idx) in enumerate(logo.split(data_ppg[train_val_subjec
 
         # Compute metrics
         mae, rmse, corr = evaluate_metrics(testyT, test_outputs.squeeze(1))
+        print(f"Correlation for this fold is: {corr:.4f}")
         # Log metrics for this fold
     writer.add_scalar("Fold/Test Loss", test_loss, 0)
     writer.add_scalar("Fold/MSE", rmse, 0)
