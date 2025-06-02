@@ -1,8 +1,24 @@
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-from model2 import Correncoder_model  # your model class
 
+import helperfunctions
+from models.model2 import Correncoder_model  # your model class
+from helperfunctions import *
+
+
+import numpy as np
+import torch
+
+y_true = torch.tensor([1.0, 2.0, 3.0])
+y_pred = torch.tensor([1.1, 2.1, 3.1])
+mae, rmse, corr = evaluate_metrics(y_true, y_pred)
+print(mae, rmse, corr)
+
+
+
+
+exit()
 # Assume testX_norm and testy_norm are already loaded/prepared and normalized
 data = np.load('test_data.npz')
 testX_norm = data['testX']
