@@ -1,8 +1,7 @@
 import numpy as np
 import torch
-import random
 import matplotlib.pyplot as plt
-from model2 import Correncoder_model  # import your model class
+from models.model2 import Correncoder_model  # import your model class
 
 def run_ensemble_test(testX, testy, fold_test_losses, model_folder='.', num_samples=5, device='cpu', num_folds=5):
     testX_flat = testX.reshape(-1, testX.shape[-1])[:, np.newaxis, :]
