@@ -1,48 +1,30 @@
 import optuna
-from tqdm import tqdm
-import pandas as pd
 import os
 import torch
 import numpy as np
 import random
+import pandas as pd
+from tqdm import tqdm
 from sklearn.model_selection import GroupShuffleSplit, LeaveOneGroupOut
 from scipy.signal import resample
+from torch.utils.data import Dataset, DataLoader
+import lightning as L
+from lightning.pytorch import Trainer
+from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
+
 from helperfunctions import apply_bandpass_filter, segment_signal, normalize_data
-
-from models.model2 import Correncoder_model  # <-- model must accept kernel_size as argument
-import torch.nn as nn
-
-class MSECorrelationLoss(nn.Module):
-    def __init__(self, alpha=0.5):
-        super(MSECorrelationLoss, self).__init__()
-        self.mse = nn.MSELoss()
-        self.alpha = alpha
-
-    def forward(self, y_pred, y_true):
-        mse_loss = self.mse(y_pred, y_true)
-        y_pred_flat = y_pred.view(y_pred.size(0), -1)
-        y_true_flat = y_true.view(y_true.size(0), -1)
-        mean_pred = torch.mean(y_pred_flat, dim=1, keepdim=True)
-        mean_true = torch.mean(y_true_flat, dim=1, keepdim=True)
-        y_pred_centered = y_pred_flat - mean_pred
-        y_true_centered = y_true_flat - mean_true
-        numerator = torch.sum(y_pred_centered * y_true_centered, dim=1)
-        denominator = torch.sqrt(torch.sum(y_pred_centered ** 2, dim=1) * torch.sum(y_true_centered ** 2, dim=1) + 1e-8)
-        corr = numerator / denominator
-        corr_loss = 1 - torch.mean(corr)
-        total_loss = mse_loss + self.alpha * corr_loss
-        return total_loss
-
-# --- Configurations ---
+from models.model2 import CorrencoderLightning  # make sure this is your Lightning model!
+from models.model3 import RespNetLightning  # or the actual path to your RespNetLightning class
+from models.model4 import *
+# Set your config
 DATA_PATH = "/Users/eli/Downloads/PPG Data/csv"
 INPUT_NAME = 'PPG'
 TARGET_NAME = 'NASAL CANULA'
 ppg_csv_files = [f for f in os.listdir(DATA_PATH) if f.endswith('.csv') and not f.startswith('.DS_Store')]
-
 ORIGINAL_FS = 256
 TARGET_FS = 30
 LOWCUT = 0.1
-STEP_SIZE = 242   # keep this fixed or make it tunable too!
+STEP_SIZE = 242
 NUM_EPOCHS = 8
 PATIENCE = 5
 LR_SCHEDULER_PATIENCE = 3
@@ -51,9 +33,28 @@ SEED = 55
 torch.manual_seed(SEED)
 random.seed(SEED)
 np.random.seed(SEED)
-device = torch.device("mps")
 
-# --- DATA LOADING - Only ONCE outside Optuna ---
+# ------------- Dataset and DataModule -------------
+class PPGRespDataset(Dataset):
+    def __init__(self, X, y):
+        self.X = torch.tensor(X, dtype=torch.float32)
+        self.y = torch.tensor(y, dtype=torch.float32)
+    def __len__(self): return len(self.X)
+    def __getitem__(self, idx): return self.X[idx], self.y[idx]
+
+class PPGRespDataModule(L.LightningDataModule):
+    def __init__(self, trainX, trainy, valX, valy, batch_size=128):
+        super().__init__()
+        self.trainX, self.trainy = trainX, trainy
+        self.valX, self.valy = valX, valy
+        self.batch_size = batch_size
+    def setup(self, stage=None):
+        self.train_ds = PPGRespDataset(self.trainX, self.trainy)
+        self.val_ds = PPGRespDataset(self.valX, self.valy)
+    def train_dataloader(self): return DataLoader(self.train_ds, batch_size=self.batch_size, shuffle=True)
+    def val_dataloader(self): return DataLoader(self.val_ds, batch_size=self.batch_size)
+
+# ------------- Pre-load all subject data once -------------
 ppg_list, resp_list = [], []
 num_of_subjects = 0
 print("data processing...")
@@ -80,21 +81,21 @@ subject_ids = np.arange(num_of_subjects)
 gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=SEED)
 train_val_idx, test_idx = next(gss.split(ppg_mat, groups=subject_ids))
 train_val_subjects = subject_ids[train_val_idx]
-test_subjects = subject_ids[test_idx]
 train_ppg = ppg_mat[train_val_subjects]
 train_resp = resp_mat[train_val_subjects]
-test_ppg = ppg_mat[test_subjects]
-test_resp = resp_mat[test_subjects]
 
+# ------------- OPTUNA OBJECTIVE -------------
 def objective(trial):
+    # --- Hyperparameters to search ---
+    # alpha = trial.suggest_float('alpha', 0.3, 1.5)
     learning_rate = trial.suggest_loguniform('learning_rate', 1e-5, 1e-3)
-    highcut = trial.suggest_uniform('highcut', 0.5, 2.5)
-    # kernel_size = trial.suggest_categorical('kernel_size', [30, 50, 75, 100])
-    lr_scheduler_factor = trial.suggest_uniform('lr_scheduler_factor', 0.1, 0.9)
+    highcut = trial.suggest_float('highcut', 0.5, 2.5)
+    lr_scheduler_factor = trial.suggest_float('lr_scheduler_factor', 0.1, 0.9)
     batch_size = trial.suggest_categorical('batch_size', [128, 256, 512])
-    segment_length = trial.suggest_categorical('segment_length', [8*30, 16*30, 32*30, 64*30]) # adjust values if needed
+    # segment_length = trial.suggest_categorical('segment_length', [8*30, 16*30, 32*30, 64*30])
+    segment_length = 2048
 
-    # --- Preprocess data using the trial's highcut and segment_length ---
+    # --- Data preprocessing using trial params ---
     ppg_filtered_list, resp_filtered_list = [], []
     for ppg, resp in zip(train_ppg, train_resp):
         ppg_filtered = apply_bandpass_filter(ppg, LOWCUT, highcut, TARGET_FS)
@@ -110,6 +111,7 @@ def objective(trial):
     data_resp = np.stack(resp_segs, axis=0)
     subject_ids = np.arange(data_ppg.shape[0])
 
+    # --- Grouped train/val split (LOGO) ---
     logo = LeaveOneGroupOut()
     train_idx, val_idx = next(logo.split(data_ppg, data_resp, groups=subject_ids))
     trainX = data_ppg[train_idx]
@@ -117,58 +119,60 @@ def objective(trial):
     valX = data_ppg[val_idx]
     valy = data_resp[val_idx]
 
+    # --- Normalize ---
     trainX, trainy = normalize_data(trainX.copy(), trainy.copy())
     valX, valy = normalize_data(valX.copy(), valy.copy())
     trainX = trainX.reshape(-1, trainX.shape[-1])[:, np.newaxis, :]
     trainy = trainy.reshape(-1, trainy.shape[-1])
     valX = valX.reshape(-1, valX.shape[-1])[:, np.newaxis, :]
     valy = valy.reshape(-1, valy.shape[-1])
-    trainXT = torch.from_numpy(trainX.astype(np.float32)).to(device)
-    trainyT = torch.from_numpy(trainy.astype(np.float32)).to(device)
-    valXT = torch.from_numpy(valX.astype(np.float32)).to(device)
-    valyT = torch.from_numpy(valy.astype(np.float32)).to(device)
 
-    model = Correncoder_model().to(device)
-    criterion = MSECorrelationLoss(alpha=0.3)
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', patience=LR_SCHEDULER_PATIENCE, factor=lr_scheduler_factor, verbose=False
+    # --- Lightning DataModule ---
+    datamodule = PPGRespDataModule(trainX, trainy, valX, valy, batch_size=batch_size)
+
+    # --- Lightning Model ---
+    # model = CorrencoderLightning(
+    #     alpha=1, lr=learning_rate,
+    #     lr_scheduler_factor=lr_scheduler_factor,
+    #     lr_scheduler_patience=LR_SCHEDULER_PATIENCE
+    # )
+    # model = RespNetLightning(
+    #     lr=learning_rate,
+    #     lr_scheduler_factor=lr_scheduler_factor,
+    #     lr_scheduler_patience=LR_SCHEDULER_PATIENCE,  # from your config
+    #     # optionally: loss_type=trial.suggest_categorical('loss_type', ['smoothl1', 'mse'])
+    # )
+    model = Transformer1DLightning(
+        input_dim=1,
+        d_model=64,
+        nhead=4,
+        num_layers=4,
+        segment_length=segment_length,  # from trial
+        lr=learning_rate,
+        loss_type='mse_corr',
+        alpha=1,
+        lr_scheduler_factor=lr_scheduler_factor,
+        lr_scheduler_patience=LR_SCHEDULER_PATIENCE,
+    )
+    early_stop = EarlyStopping(monitor="val_loss", patience=PATIENCE, mode="min")
+    checkpoint = ModelCheckpoint(monitor="val_loss", save_top_k=1, mode="min")
+
+    # --- Lightning Trainer ---
+    trainer = Trainer(
+        max_epochs=NUM_EPOCHS,
+        accelerator="auto",
+        devices="auto",
+        callbacks=[early_stop, checkpoint],
+        logger=False,
+        enable_progress_bar=False,
     )
 
-    best_val_loss = float('inf')
-    patience_counter = 0
-    total_step = trainXT.shape[0]
-    for epoch in range(NUM_EPOCHS):
-        model.train()
-        epoch_loss = 0
-        for i in range(0, total_step, batch_size):
-            batch_X = trainXT[i:i + batch_size]
-            batch_y = trainyT[i:i + batch_size]
-            optimizer.zero_grad()
-            outputs = model(batch_X)
-            loss = criterion(outputs.squeeze(1), batch_y)
-            loss.backward()
-            optimizer.step()
-            epoch_loss += loss.item() * batch_X.size(0)
-        avg_train_loss = epoch_loss / total_step
-
-        model.eval()
-        with torch.no_grad():
-            val_outputs = model(valXT)
-            val_loss = criterion(val_outputs.squeeze(1), valyT).item()
-        lr_scheduler.step(val_loss)
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            patience_counter = 0
-        else:
-            patience_counter += 1
-            if patience_counter >= PATIENCE:
-                break
-
+    trainer.fit(model, datamodule=datamodule)
+    best_val_loss = trainer.callback_metrics["val_loss"].item()
     return best_val_loss
 
-# --- RUN OPTUNA STUDY ---
+# ------------- Run Optuna -------------
 study = optuna.create_study(direction='minimize')
-study.optimize(objective, n_trials=5)  # You can increase for deeper search
+study.optimize(objective, n_trials=1)  # set your number of trials
 
 print("Best params found:", study.best_trial.params)
