@@ -48,17 +48,17 @@ class PPGRespDataModule(L.LightningDataModule):
 
 def main():
     # --- Configurations ---
-    DATA_PATH = "/Users/eli/Downloads/PPG Data/csv"
-    INPUT_NAME = 'PPG'
-    TARGET_NAME = 'NASAL CANULA'
-    ppg_csv_files = [f for f in os.listdir(DATA_PATH) if f.endswith('.csv') and not f.startswith('.DS_Store')]
-
-    BIDMC_PATH = '/Users/eli/Downloads/bidmc_data.mat'
-
-    ORIGINAL_FS = 256  # your original sampling rate
-    TARGET_FS = 30  # your desired target rate
-    LOWCUT = 0.1
-    HIGHCUT = 1.3
+    # DATA_PATH = "/Users/eli/Downloads/PPG Data/csv"
+    # INPUT_NAME = 'PPG'
+    # TARGET_NAME = 'NASAL CANULA'
+    # ppg_csv_files = [f for f in os.listdir(DATA_PATH) if f.endswith('.csv') and not f.startswith('.DS_Store')]
+    #
+    # BIDMC_PATH = '/Users/eli/Downloads/bidmc_data.mat'
+    #
+    # ORIGINAL_FS = 256  # your original sampling rate
+    # TARGET_FS = 30  # your desired target rate
+    # LOWCUT = 0.1
+    # HIGHCUT = 1.3
 
     SEGMENT_LENGTH = 2048
     STEP_SIZE = 242
@@ -66,10 +66,10 @@ def main():
     # criterion = torch.nn.MSELoss()
     criterion = MSECorrelationLoss(alpha=0.9)  # adjust alpha to your needs
     # criterion = SmoothL1Loss()
-    NUM_EPOCHS = 20
+    NUM_EPOCHS = 100
     BATCH_SIZE = 128
     LEARNING_RATE = 1e-4
-    PATIENCE = 20
+    PATIENCE = 30
     LR_SCHEDULER_PATIENCE = 8  # Lower than early stopping patience
     LR_SCHEDULER_FACTOR = 0.55
 
@@ -203,7 +203,7 @@ def main():
 
 
         trainer = L.Trainer(
-            max_epochs=20,
+            max_epochs=100,
             callbacks=[checkpoint_callback, early_stop_callback],
             accelerator="auto",
             devices="auto",
