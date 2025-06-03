@@ -53,7 +53,7 @@ def main():
     TARGET_NAME = 'NASAL CANULA'
     ppg_csv_files = [f for f in os.listdir(DATA_PATH) if f.endswith('.csv') and not f.startswith('.DS_Store')]
 
-    # BIDMC_PATH = '/Users/eli/Downloads/bidmc_data.mat'
+    BIDMC_PATH = ''
 
     ORIGINAL_FS = 256  # your original sampling rate
     TARGET_FS = 30  # your desired target rate
