@@ -48,17 +48,17 @@ class PPGRespDataModule(L.LightningDataModule):
 
 def main():
     # --- Configurations ---
-    # DATA_PATH = "/Users/eli/Downloads/PPG Data/csv"
-    # INPUT_NAME = 'PPG'
-    # TARGET_NAME = 'NASAL CANULA'
-    # ppg_csv_files = [f for f in os.listdir(DATA_PATH) if f.endswith('.csv') and not f.startswith('.DS_Store')]
-    #
+    DATA_PATH = "csv"
+    INPUT_NAME = 'PPG'
+    TARGET_NAME = 'NASAL CANULA'
+    ppg_csv_files = [f for f in os.listdir(DATA_PATH) if f.endswith('.csv') and not f.startswith('.DS_Store')]
+
     # BIDMC_PATH = '/Users/eli/Downloads/bidmc_data.mat'
-    #
-    # ORIGINAL_FS = 256  # your original sampling rate
-    # TARGET_FS = 30  # your desired target rate
-    # LOWCUT = 0.1
-    # HIGHCUT = 1.3
+
+    ORIGINAL_FS = 256  # your original sampling rate
+    TARGET_FS = 30  # your desired target rate
+    LOWCUT = 0.1
+    HIGHCUT = 1.3
 
     SEGMENT_LENGTH = 2048
     STEP_SIZE = 242
@@ -74,7 +74,7 @@ def main():
     LR_SCHEDULER_FACTOR = 0.55
 
 
-    NUM_WORKERS = 2
+    NUM_WORKERS = 32
 
     SEED = 55
     print("Seed")
@@ -93,23 +93,23 @@ def main():
 
 
     # --- pre-process data ---
-    # data_ppg, data_resp = preprocess_dataset(kind=KIND,
-    #                       ppg_csv_files=ppg_csv_files,
-    #                       DATA_PATH=DATA_PATH,
-    #                       INPUT_NAME=INPUT_NAME,
-    #                       TARGET_NAME=TARGET_NAME,
-    #                       ORIGINAL_FS=ORIGINAL_FS,
-    #                       TARGET_FS=TARGET_FS,
-    #                       LOWCUT=LOWCUT,
-    #                       HIGHCUT=HIGHCUT,
-    #                       SEGMENT_LENGTH=SEGMENT_LENGTH,
-    #                       STEP_SIZE=STEP_SIZE,
-    #                       bidmc_mat_path=BIDMC_PATH)
+    data_ppg, data_resp = preprocess_dataset(kind=KIND,
+                          ppg_csv_files=ppg_csv_files,
+                          DATA_PATH=DATA_PATH,
+                          INPUT_NAME=INPUT_NAME,
+                          TARGET_NAME=TARGET_NAME,
+                          ORIGINAL_FS=ORIGINAL_FS,
+                          TARGET_FS=TARGET_FS,
+                          LOWCUT=LOWCUT,
+                          HIGHCUT=HIGHCUT,
+                          SEGMENT_LENGTH=SEGMENT_LENGTH,
+                          STEP_SIZE=STEP_SIZE,
+                          bidmc_mat_path=BIDMC_PATH)
 
 
     # --- save pre-processed data ---
-    # np.save(f"data_ppg_kind{KIND}_seg{SEGMENT_LENGTH}.npy", data_ppg)
-    # np.save(f"data_resp_kind{KIND}_seg{SEGMENT_LENGTH}.npy", data_resp)
+    np.save(f"data_ppg_kind{KIND}_seg{SEGMENT_LENGTH}.npy", data_ppg)
+    np.save(f"data_resp_kind{KIND}_seg{SEGMENT_LENGTH}.npy", data_resp)
 
 
 
@@ -199,7 +199,7 @@ def main():
             lr_scheduler_patience=LR_SCHEDULER_PATIENCE,
         )
         checkpoint_callback = L.pytorch.callbacks.ModelCheckpoint(monitor="val_loss", save_top_k=1, mode="min")
-        early_stop_callback = L.pytorch.callbacks.EarlyStopping(monitor="val_loss", patience=20, mode="min")
+        early_stop_callback = L.pytorch.callbacks.EarlyStopping(monitor="val_loss", patience=30, mode="min")
 
 
         trainer = L.Trainer(
