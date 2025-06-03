@@ -64,7 +64,7 @@ def main():
     STEP_SIZE = 242
     KIND = 0
     # criterion = torch.nn.MSELoss()
-    criterion = MSECorrelationLoss(alpha=0.9)  # adjust alpha to your needs
+    criterion = MSECorrelationLoss(alpha=1)  # adjust alpha to your needs
     # criterion = SmoothL1Loss()
     NUM_EPOCHS = 100
     BATCH_SIZE = 128
