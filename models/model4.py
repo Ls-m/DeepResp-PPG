@@ -116,7 +116,7 @@ class Transformer1DLightning(L.LightningModule):
             mode='min',
             patience=self.lr_scheduler_patience,
             factor=self.lr_scheduler_factor,
-            verbose=True
+
         )
         return {
             "optimizer": optimizer,
